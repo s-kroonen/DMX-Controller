@@ -23,6 +23,8 @@
       <button id="btn-view-3d" class="toggle-btn active">3D View</button>
       <button id="btn-patch" class="toggle-btn">Patch</button>
       <button id="btn-fixture-creator" class="toggle-btn">Fixture Creator</button>
+      <button id="btn-room-shape" class="toggle-btn">Room Shape</button>
+      <button id="btn-room-objects" class="toggle-btn">Objects</button>
       <button id="btn-safety-zones" class="toggle-btn">Safety Zones</button>
       <button id="btn-animations" class="toggle-btn">Animations</button>
       <button id="btn-blackout" class="danger-btn">BLACKOUT</button>
@@ -68,7 +70,9 @@
     <div id="panel-strobe" class="floating-panel" data-panel="strobe">
       <div class="panel-header">Strobe / Shutter <span class="drag-handle">::</span><button class="panel-close">x</button></div>
       <div class="panel-body">
-        <label>Strobe/Shutter <input type="range" min="0" max="255" value="255" id="strobe-slider"></label>
+        <label id="strobe-dimmer-label">Dimmer <input type="range" min="0" max="255" value="255" id="strobe-dimmer-slider"></label>
+        <label id="strobe-speed-label">Strobe Speed <input type="range" min="0" max="255" value="255" id="strobe-slider"></label>
+        <div id="strobe-shared-hint" class="hint hidden">This fixture shares one physical channel for dimmer and strobe -- whichever slider you move last is greyed on the other and becomes the value actually sent.</div>
         <div class="btn-row">
           <button data-strobe="255">Open</button>
           <button data-strobe="0">Closed</button>
@@ -165,6 +169,67 @@
         <h3>Import from QLC+ (.qxf)</h3>
         <input id="fc-qxf-file" type="file" accept=".qxf">
         <button id="fc-qxf-import">Import</button>
+      </div>
+    </div>
+
+    <div id="modal-room-shape" class="modal hidden">
+      <div class="modal-content wide">
+        <h2>Room Shape <button class="modal-close">x</button></h2>
+        <p class="hint">Rooms are rarely perfect rectangles. Click to place floor-plan corners in order
+          (any number of sides, any shape) -- the 3D view extrudes this outline up to the ceiling height below.
+          Leave it empty to keep a simple rectangle sized by width/depth.</p>
+        <label>Room name <input id="rs-name" type="text"></label>
+        <div class="grid3">
+          <label>Fallback width (m) <input id="rs-width" type="number" step="0.1" value="10"></label>
+          <label>Fallback depth (m) <input id="rs-depth" type="number" step="0.1" value="10"></label>
+          <label>Ceiling height (m) <input id="rs-height" type="number" step="0.1" value="4"></label>
+        </div>
+        <canvas id="rs-canvas" width="440" height="440"></canvas>
+        <div class="btn-row">
+          <button id="rs-undo" type="button">Undo last point</button>
+          <button id="rs-clear" type="button">Clear (use rectangle)</button>
+          <button id="rs-save" class="primary-btn" type="button">Save Room Shape</button>
+        </div>
+        <div class="hint" id="rs-point-count">0 points</div>
+      </div>
+    </div>
+
+    <div id="modal-room-objects" class="modal hidden">
+      <div class="modal-content">
+        <h2>Objects <button class="modal-close">x</button></h2>
+        <p class="hint">Visual/spatial reference objects in the 3D view -- walls, people (for scale), boxes and
+          raised surfaces. These are not safety zones (they don't block beams); use Safety Zones for that.</p>
+        <label>Kind
+          <select id="ro-kind">
+            <option value="wall">Wall (segment)</option>
+            <option value="person">Person (scale reference)</option>
+            <option value="box">Box / obstacle</option>
+            <option value="surface">Surface / platform</option>
+          </select>
+        </label>
+        <label>Name <input id="ro-name" type="text" placeholder="e.g. North wall"></label>
+        <div class="grid2">
+          <fieldset><legend id="ro-pos-legend">Position</legend>
+            <label>X <input id="ro-x" type="number" step="0.1" value="0"></label>
+            <label>Y <input id="ro-y" type="number" step="0.1" value="0"></label>
+            <label>Z <input id="ro-z" type="number" step="0.1" value="0"></label>
+          </fieldset>
+          <fieldset id="ro-end-fieldset"><legend>Wall end point</legend>
+            <label>X <input id="ro-ex" type="number" step="0.1" value="1"></label>
+            <label>Y <input id="ro-ey" type="number" step="0.1" value="0"></label>
+            <label>Z <input id="ro-ez" type="number" step="0.1" value="0"></label>
+          </fieldset>
+        </div>
+        <div class="grid3">
+          <label id="ro-width-label">Width (m) <input id="ro-width" type="number" step="0.1" value="0.5"></label>
+          <label id="ro-depth-label">Depth (m) <input id="ro-depth" type="number" step="0.1" value="0.5"></label>
+          <label id="ro-height-label">Height (m) <input id="ro-height" type="number" step="0.1" value="1.8"></label>
+        </div>
+        <label id="ro-thickness-label">Thickness (m) <input id="ro-thickness" type="number" step="0.05" value="0.1"></label>
+        <label>Color <input id="ro-color" type="color" value="#888888"></label>
+        <button id="ro-submit" class="primary-btn">Add Object</button>
+        <hr>
+        <div id="ro-list"></div>
       </div>
     </div>
 

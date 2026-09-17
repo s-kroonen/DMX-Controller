@@ -87,31 +87,48 @@ needs to change once the real byte format is confirmed.
   state for controlling one fixture or a whole group at once -- color,
   dimmer, strobe/shutter, raw pan/tilt, custom-channel sliders, and 3D
   aiming, all independent so RGB + strobe + pan/tilt can be driven
-  simultaneously without switching views (freestyler-style).
+  simultaneously without switching views (freestyler-style). The
+  Strobe/Shutter window has separate Dimmer and Strobe Speed sliders; on
+  fixtures that multiplex both onto one physical channel (common on cheap
+  PARs -- see the bundled `cheap-par-shared-dimmer-strobe-4ch` profile),
+  the UI detects the shared channel and greys out whichever slider you
+  didn't touch last, since only one of them is actually in effect.
 - **Animation engine** (`app/show/animation.py`): keyframes reference
   room-space target points plus color/dimmer/strobe, not raw channel
   values, so the IK core is what turns a keyframed path into correct
   pan/tilt every tick -- avoiding the ellipse/faceting distortion you get
   keyframing raw pan/tilt directly.
+- **Room shape + objects** (`app/room/model.py`): a room is rarely a
+  perfect rectangle, so `Room.floor_points` holds an arbitrary polygon
+  (any number of sides, drawn as a 2D floor plan in the **Room Shape**
+  editor) extruded up to a ceiling height for the 3D view; it falls back
+  to a simple width/depth rectangle until a shape is drawn. The
+  **Objects** editor adds visual/spatial reference objects into the scene
+  -- wall segments, person-scale markers (for a sense of scale), box
+  obstacles, and raised surfaces/platforms. These are purely visual
+  reference, unlike Safety Zones, which actually block beams.
 - **Web UI** (`frontend/`): draggable, overlaid RGB / strobe-shutter /
   pan-tilt / custom-channel control windows that all apply live to
   whatever fixture(s) or group is currently selected; a Three.js 3D scene
-  of the room with fixtures and beams, click-to-aim on any wall/floor/
-  ceiling surface; a fixture patch screen; the fixture creator; a safety
-  zone editor; and a keyframe animation editor. Three.js is vendored
-  locally (`frontend/vendor/three/`) so the controller runs with no
-  internet access at the venue.
+  of the room (arbitrary floor polygon, walls, objects) with fixtures and
+  beams, click-to-aim on any wall/floor/ceiling surface; a fixture patch
+  screen; the fixture creator; a 2D room-shape editor; an objects editor;
+  a safety zone editor; and a keyframe animation editor. Three.js is
+  vendored locally (`frontend/vendor/three/`) so the controller runs with
+  no internet access at the venue.
 
 ## Known limitations / next steps
 
 - DMX4ALL protocol bytes are a best-effort placeholder (see above) until
   validated against real hardware with a USB capture.
-- Safety zones and room walls are axis-aligned boxes/planes, not arbitrary
-  polygons -- covers the common cases from the design doc without a full
-  BSP/mesh room model.
+- Safety zones are still axis-aligned boxes (not arbitrary polygons) --
+  covers the common cases from the design doc without a full BSP/mesh
+  volume model. Room *floor shape* is a full arbitrary polygon now, but
+  walls are always vertical (no sloped ceilings/walls).
 - Fixture placement is manual entry (position/orientation fields) rather
   than a calibration flow (aim at known points, solve for position) --
   the IK core and API already support arbitrary positions, so calibration
   can be added as a pure frontend feature later.
 - AR room scanning is an explicit future phase (separate app), not
-  attempted here -- rooms are built manually in the web UI for now.
+  attempted here -- rooms are built manually (2D floor plan + objects) in
+  the web UI for now.

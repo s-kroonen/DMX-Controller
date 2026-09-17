@@ -102,18 +102,83 @@ function initRgbPanel() {
   }
 }
 
+// Some fixtures multiplex dimmer and strobe/shutter onto the SAME physical
+// DMX channel (e.g. a single "Dimmer/Strobe" channel where low values dim
+// and higher values ramp strobe speed). When that's true for the current
+// selection, only one of the two sliders can actually be "in effect" at
+// once -- whichever the operator touched last -- so the other is greyed
+// out as a visual "this value is stale" cue rather than left implying it's
+// still live. When the fixture has genuinely separate channels, both
+// sliders are always fully active.
+let strobeLastTouched = null; // "dimmer" | "strobe" | null
+let lastStrobeSelectionKey = "";
+
+function sharesChannelWithStrobe() {
+  const fixtureIds = state.expandedFixtureIds();
+  for (const fid of fixtureIds) {
+    const fixture = state.fixtureById(fid);
+    if (!fixture) continue;
+    const profile = state.profileById(fixture.profile_id);
+    if (!profile) continue;
+    const dimmerCh = profile.channels.dimmer;
+    const strobeCh = profile.channels.strobe ?? profile.channels.shutter;
+    if (dimmerCh !== undefined && strobeCh !== undefined && dimmerCh === strobeCh) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function updateStrobeGreying() {
+  const selectionKey = state.expandedFixtureIds().slice().sort().join(",");
+  if (selectionKey !== lastStrobeSelectionKey) {
+    lastStrobeSelectionKey = selectionKey;
+    strobeLastTouched = null;
+  }
+
+  const shared = sharesChannelWithStrobe();
+  const dimmerLabel = document.getElementById("strobe-dimmer-label");
+  const speedLabel = document.getElementById("strobe-speed-label");
+  const hint = document.getElementById("strobe-shared-hint");
+  hint.classList.toggle("hidden", !shared);
+
+  if (!shared) {
+    dimmerLabel.classList.remove("greyed-out");
+    speedLabel.classList.remove("greyed-out");
+    return;
+  }
+  dimmerLabel.classList.toggle("greyed-out", strobeLastTouched === "strobe");
+  speedLabel.classList.toggle("greyed-out", strobeLastTouched === "dimmer");
+}
+
 function initStrobePanel() {
-  const slider = document.getElementById("strobe-slider");
-  slider.addEventListener("input", () => {
-    forEachTarget((id) => api.setStrobe(id, Number(slider.value)).catch(console.error));
+  const dimmerSlider = document.getElementById("strobe-dimmer-slider");
+  const speedSlider = document.getElementById("strobe-slider");
+
+  dimmerSlider.addEventListener("input", () => {
+    strobeLastTouched = "dimmer";
+    forEachTarget((id) => api.setDimmer(id, Number(dimmerSlider.value)).catch(console.error));
+    updateStrobeGreying();
   });
+
+  speedSlider.addEventListener("input", () => {
+    strobeLastTouched = "strobe";
+    forEachTarget((id) => api.setStrobe(id, Number(speedSlider.value)).catch(console.error));
+    updateStrobeGreying();
+  });
+
   document.querySelectorAll("#panel-strobe [data-strobe]").forEach((btn) => {
     btn.onclick = () => {
       const value = Number(btn.dataset.strobe);
-      slider.value = value;
+      speedSlider.value = value;
+      strobeLastTouched = "strobe";
       forEachTarget((id) => api.setStrobe(id, value).catch(console.error));
+      updateStrobeGreying();
     };
   });
+
+  onStateChange(updateStrobeGreying);
+  updateStrobeGreying();
 }
 
 function initPanTiltPanel() {

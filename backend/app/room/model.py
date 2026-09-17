@@ -23,6 +23,12 @@ class Vec3:
 
 
 @dataclasses.dataclass
+class Vec2:
+    x: float
+    y: float
+
+
+@dataclasses.dataclass
 class Orientation:
     """Mounting orientation in degrees. yaw = rotation around Z (up),
     pitch = tilt of the fixture's home/zero direction, roll usually 0."""
@@ -81,9 +87,75 @@ class FixtureInstance:
 
 @dataclasses.dataclass
 class RoomDimensions:
-    width: float = 10.0  # meters, X axis
-    depth: float = 10.0  # meters, Y axis
-    height: float = 4.0  # meters, Z axis (up)
+    width: float = 10.0  # meters, X axis -- used only as a fallback rectangle
+    depth: float = 10.0  # meters, Y axis    when Room.floor_points is empty
+    height: float = 4.0  # meters, Z axis (up) -- ceiling height either way
+
+
+def default_rectangle_floor(dimensions: RoomDimensions) -> list[Vec2]:
+    """A room's real floor is rarely a perfect rectangle -- Room.floor_points
+    holds an arbitrary polygon drawn in the 2D room-shape editor. This is
+    only the fallback used until the user has drawn a real shape."""
+    hw, hd = dimensions.width / 2.0, dimensions.depth / 2.0
+    return [Vec2(-hw, -hd), Vec2(hw, -hd), Vec2(hw, hd), Vec2(-hw, hd)]
+
+
+@dataclasses.dataclass
+class RoomObject:
+    """A reference object placed in the 3D scene -- a wall segment, a
+    person-scale marker, a box obstacle, or a raised surface/platform.
+    Purely visual/spatial reference (unlike SafetyZone, it does not block
+    beams) so operators can sanity-check fixture aim against real
+    obstacles and get a sense of scale.
+
+    kind == "wall": position is the segment start, end_position the end;
+      thickness and height apply, width/depth are unused.
+    kind == "person": position is the ground point; height is the
+      person's height, width/depth default to a body-width footprint.
+    kind in ("box", "surface"): position is the base center; width/depth/
+      height give its footprint and height (a "surface" is just a low,
+      flat box representing a platform/table/DJ booth).
+    """
+
+    id: str
+    name: str
+    kind: str  # "wall" | "person" | "box" | "surface"
+    position: Vec3
+    end_position: Optional[Vec3] = None
+    thickness: float = 0.1
+    width: float = 0.5
+    depth: float = 0.5
+    height: float = 1.8
+    color: str = "#888888"
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "kind": self.kind,
+            "position": dataclasses.asdict(self.position),
+            "end_position": dataclasses.asdict(self.end_position) if self.end_position else None,
+            "thickness": self.thickness,
+            "width": self.width,
+            "depth": self.depth,
+            "height": self.height,
+            "color": self.color,
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "RoomObject":
+        return RoomObject(
+            id=d["id"],
+            name=d["name"],
+            kind=d["kind"],
+            position=Vec3(**d["position"]),
+            end_position=Vec3(**d["end_position"]) if d.get("end_position") else None,
+            thickness=d.get("thickness", 0.1),
+            width=d.get("width", 0.5),
+            depth=d.get("depth", 0.5),
+            height=d.get("height", 1.8),
+            color=d.get("color", "#888888"),
+        )
 
 
 @dataclasses.dataclass
@@ -126,8 +198,19 @@ class SafetyZone:
 class Room:
     name: str = "Untitled Room"
     dimensions: RoomDimensions = dataclasses.field(default_factory=RoomDimensions)
+    # Arbitrary polygon (in room-space X/Y, ordered, not necessarily
+    # rectangular or 4-sided) drawn in the 2D room-shape editor and
+    # extruded to dimensions.height for the 3D view. Empty means "not
+    # drawn yet" -- effective_floor_points() falls back to a rectangle.
+    floor_points: list[Vec2] = dataclasses.field(default_factory=list)
     fixtures: dict[str, FixtureInstance] = dataclasses.field(default_factory=dict)
     safety_zones: dict[str, SafetyZone] = dataclasses.field(default_factory=dict)
+    objects: dict[str, RoomObject] = dataclasses.field(default_factory=dict)
+
+    def effective_floor_points(self) -> list[Vec2]:
+        if len(self.floor_points) >= 3:
+            return self.floor_points
+        return default_rectangle_floor(self.dimensions)
 
     def add_fixture(self, fixture: FixtureInstance) -> None:
         self.fixtures[fixture.id] = fixture
@@ -141,12 +224,20 @@ class Room:
     def remove_safety_zone(self, zone_id: str) -> None:
         self.safety_zones.pop(zone_id, None)
 
+    def add_object(self, obj: RoomObject) -> None:
+        self.objects[obj.id] = obj
+
+    def remove_object(self, object_id: str) -> None:
+        self.objects.pop(object_id, None)
+
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "dimensions": dataclasses.asdict(self.dimensions),
+            "floor_points": [dataclasses.asdict(p) for p in self.floor_points],
             "fixtures": [f.to_dict() for f in self.fixtures.values()],
             "safety_zones": [z.to_dict() for z in self.safety_zones.values()],
+            "objects": [o.to_dict() for o in self.objects.values()],
         }
 
     @staticmethod
@@ -154,9 +245,12 @@ class Room:
         room = Room(
             name=d.get("name", "Untitled Room"),
             dimensions=RoomDimensions(**d.get("dimensions", {})),
+            floor_points=[Vec2(**p) for p in d.get("floor_points", [])],
         )
         for f in d.get("fixtures", []):
             room.add_fixture(FixtureInstance.from_dict(f))
         for z in d.get("safety_zones", []):
             room.add_safety_zone(SafetyZone.from_dict(z))
+        for o in d.get("objects", []):
+            room.add_object(RoomObject.from_dict(o))
         return room

@@ -11,7 +11,15 @@ from ..dmx.dmx4all import list_serial_ports
 from ..fixtures.qxf_import import parse_qxf
 from ..fixtures.schema import CustomChannel, FixtureProfile
 from ..groups.model import Group
-from ..room.model import FixtureInstance, Orientation, RoomDimensions, SafetyZone, Vec3
+from ..room.model import (
+    FixtureInstance,
+    Orientation,
+    RoomDimensions,
+    RoomObject,
+    SafetyZone,
+    Vec2,
+    Vec3,
+)
 from ..show.animation import Animation, AnimationTrack, Keyframe
 
 router = APIRouter(prefix="/api")
@@ -104,9 +112,15 @@ class RoomDimensionsIn(BaseModel):
     height: float
 
 
+class Vec2In(BaseModel):
+    x: float
+    y: float
+
+
 class RoomIn(BaseModel):
     name: str
     dimensions: RoomDimensionsIn
+    floor_points: list[Vec2In] = []
 
 
 @router.put("/room")
@@ -114,6 +128,7 @@ def update_room(payload: RoomIn):
     ctx = get_context()
     ctx.engine.room.name = payload.name
     ctx.engine.room.dimensions = RoomDimensions(**payload.dimensions.model_dump())
+    ctx.engine.room.floor_points = [Vec2(**p.model_dump()) for p in payload.floor_points]
     ctx.persist_room()
     return ctx.engine.room.to_dict()
 
@@ -224,6 +239,79 @@ def add_safety_zone(payload: SafetyZoneIn):
 def delete_safety_zone(zone_id: str):
     ctx = get_context()
     ctx.engine.room.remove_safety_zone(zone_id)
+    ctx.persist_room()
+    return {"ok": True}
+
+
+class RoomObjectIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    kind: str  # "wall" | "person" | "box" | "surface"
+    position: Vec3In
+    end_position: Optional[Vec3In] = None
+    thickness: float = 0.1
+    width: float = 0.5
+    depth: float = 0.5
+    height: float = 1.8
+    color: str = "#888888"
+
+
+VALID_OBJECT_KINDS = {"wall", "person", "box", "surface"}
+
+
+@router.post("/room/objects")
+def add_room_object(payload: RoomObjectIn):
+    if payload.kind not in VALID_OBJECT_KINDS:
+        raise HTTPException(400, f"unknown object kind {payload.kind!r}")
+    if payload.kind == "wall" and payload.end_position is None:
+        raise HTTPException(400, "wall objects require end_position")
+    ctx = get_context()
+    object_id = payload.id or f"obj-{uuid.uuid4().hex[:8]}"
+    obj = RoomObject(
+        id=object_id,
+        name=payload.name,
+        kind=payload.kind,
+        position=Vec3(**payload.position.model_dump()),
+        end_position=Vec3(**payload.end_position.model_dump()) if payload.end_position else None,
+        thickness=payload.thickness,
+        width=payload.width,
+        depth=payload.depth,
+        height=payload.height,
+        color=payload.color,
+    )
+    ctx.engine.room.add_object(obj)
+    ctx.persist_room()
+    return obj.to_dict()
+
+
+@router.put("/room/objects/{object_id}")
+def update_room_object(object_id: str, payload: RoomObjectIn):
+    ctx = get_context()
+    if object_id not in ctx.engine.room.objects:
+        raise HTTPException(404, "object not found")
+    if payload.kind not in VALID_OBJECT_KINDS:
+        raise HTTPException(400, f"unknown object kind {payload.kind!r}")
+    obj = RoomObject(
+        id=object_id,
+        name=payload.name,
+        kind=payload.kind,
+        position=Vec3(**payload.position.model_dump()),
+        end_position=Vec3(**payload.end_position.model_dump()) if payload.end_position else None,
+        thickness=payload.thickness,
+        width=payload.width,
+        depth=payload.depth,
+        height=payload.height,
+        color=payload.color,
+    )
+    ctx.engine.room.objects[object_id] = obj
+    ctx.persist_room()
+    return obj.to_dict()
+
+
+@router.delete("/room/objects/{object_id}")
+def delete_room_object(object_id: str):
+    ctx = get_context()
+    ctx.engine.room.remove_object(object_id)
     ctx.persist_room()
     return {"ok": True}
 

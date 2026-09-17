@@ -34,6 +34,10 @@ export const api = {
   addSafetyZone: (zone) => req("POST", "/room/safety-zones", zone),
   deleteSafetyZone: (id) => req("DELETE", `/room/safety-zones/${id}`),
 
+  addRoomObject: (obj) => req("POST", "/room/objects", obj),
+  updateRoomObject: (id, obj) => req("PUT", `/room/objects/${id}`, obj),
+  deleteRoomObject: (id) => req("DELETE", `/room/objects/${id}`),
+
   listGroups: () => req("GET", "/groups"),
   createGroup: (group) => req("POST", "/groups", group),
   deleteGroup: (id) => req("DELETE", `/groups/${id}`),

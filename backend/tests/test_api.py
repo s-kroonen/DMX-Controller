@@ -80,3 +80,57 @@ def test_blackout(client):
     client.post("/api/control/blackout")
     snap = client.get("/api/snapshot").json()
     assert snap["fixture_state"][fx["id"]]["values"] == {}
+
+
+def test_update_room_shape_with_custom_floor_polygon(client):
+    resp = client.put("/api/room", json={
+        "name": "L-Shaped Venue",
+        "dimensions": {"width": 10, "depth": 10, "height": 3.5},
+        "floor_points": [
+            {"x": 0, "y": 0}, {"x": 6, "y": 0}, {"x": 6, "y": 3},
+            {"x": 3, "y": 3}, {"x": 3, "y": 6}, {"x": 0, "y": 6},
+        ],
+    })
+    assert resp.status_code == 200
+    room = client.get("/api/room").json()
+    assert room["name"] == "L-Shaped Venue"
+    assert len(room["floor_points"]) == 6
+
+
+def test_room_objects_crud(client):
+    wall = client.post("/api/room/objects", json={
+        "name": "North Wall", "kind": "wall",
+        "position": {"x": -5, "y": 5, "z": 0},
+        "end_position": {"x": 5, "y": 5, "z": 0},
+        "thickness": 0.2, "height": 3.0,
+    })
+    assert wall.status_code == 200
+    wall_id = wall.json()["id"]
+
+    person = client.post("/api/room/objects", json={
+        "name": "Reference person", "kind": "person",
+        "position": {"x": 0, "y": 0, "z": 0}, "height": 1.75,
+    })
+    assert person.status_code == 200
+
+    room = client.get("/api/room").json()
+    assert len(room["objects"]) == 2
+
+    resp = client.delete(f"/api/room/objects/{wall_id}")
+    assert resp.status_code == 200
+    room = client.get("/api/room").json()
+    assert len(room["objects"]) == 1
+
+
+def test_wall_object_requires_end_position(client):
+    resp = client.post("/api/room/objects", json={
+        "name": "Bad Wall", "kind": "wall", "position": {"x": 0, "y": 0, "z": 0},
+    })
+    assert resp.status_code == 400
+
+
+def test_room_object_invalid_kind_rejected(client):
+    resp = client.post("/api/room/objects", json={
+        "name": "Mystery", "kind": "spaceship", "position": {"x": 0, "y": 0, "z": 0},
+    })
+    assert resp.status_code == 400

@@ -4,7 +4,10 @@
 // e.g. select a fixture and a group together and set color on both.
 
 export const state = {
-  room: { name: "", dimensions: { width: 10, depth: 10, height: 4 }, fixtures: [], safety_zones: [] },
+  room: {
+    name: "", dimensions: { width: 10, depth: 10, height: 4 },
+    floor_points: [], fixtures: [], safety_zones: [], objects: [],
+  },
   groups: [],
   profiles: [],
   fixtureState: {},

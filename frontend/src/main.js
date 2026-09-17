@@ -6,6 +6,8 @@ import { initPatchModal } from "./patch.js";
 import { initFixtureCreator } from "./fixtureCreator.js";
 import { initSafetyModal } from "./safety.js";
 import { initAnimationsModal } from "./animations.js";
+import { initRoomShapeModal } from "./roomShape.js";
+import { initRoomObjectsModal } from "./roomObjects.js";
 import { initScene3D } from "./scene3d.js";
 import { loadInitialData } from "./main_data.js";
 
@@ -48,6 +50,8 @@ async function bootstrap() {
   initPanels();
   initPatchModal();
   initFixtureCreator();
+  initRoomShapeModal();
+  initRoomObjectsModal();
   initSafetyModal();
   initAnimationsModal();
   initBlackout();

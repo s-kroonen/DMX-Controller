@@ -1,0 +1,19 @@
+{
+  "id": "cheap-par-shared-dimmer-strobe-4ch",
+  "name": "Cheap RGB PAR (shared Dimmer/Strobe, 4ch)",
+  "manufacturer": "Generic",
+  "mode": "4ch",
+  "channel_count": 4,
+  "fixture_type": "par",
+  "channels": {
+    "dimmer": 1,
+    "strobe": 1,
+    "red": 2,
+    "green": 3,
+    "blue": 4
+  },
+  "custom_channels": [],
+  "pan_range_deg": null,
+  "tilt_range_deg": null,
+  "defaults": { "dimmer": 200 }
+}

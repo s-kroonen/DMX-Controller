@@ -141,6 +141,8 @@ button:hover { filter: brightness(1.15); }
 }
 
 .hint { font-size: 0.75em; color: var(--text-dim); }
+.hint.hidden { display: none; }
+.greyed-out { opacity: 0.4; }
 
 .modal {
   position: fixed; inset: 0;
@@ -164,6 +166,9 @@ button:hover { filter: brightness(1.15); }
 .modal-content input, .modal-content select { width: 100%; padding: 5px; margin-top: 3px; background: #14161a; color: var(--text); border: 1px solid var(--panel-border); border-radius: 4px; }
 .modal-content fieldset { margin: 10px 0; border: 1px solid var(--panel-border); border-radius: 6px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.modal-content.wide { width: 620px; }
+#rs-canvas { background: #0e1013; border: 1px solid var(--panel-border); border-radius: 6px; margin: 10px 0; cursor: crosshair; display: block; }
 .function-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .function-grid label { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin: 2px 0; }
 .function-grid input { width: 60px; }
