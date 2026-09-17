@@ -20,6 +20,7 @@
       <div class="brand">DMX Controller</div>
       <div id="dmx-status" class="status-pill">DMX: --</div>
       <div class="spacer"></div>
+      <button id="btn-dmx-setup" class="toggle-btn">DMX Setup</button>
       <button id="btn-view-3d" class="toggle-btn active">3D View</button>
       <button id="btn-patch" class="toggle-btn">Patch</button>
       <button id="btn-fixture-creator" class="toggle-btn">Fixture Creator</button>
@@ -169,6 +170,52 @@
         <h3>Import from QLC+ (.qxf)</h3>
         <input id="fc-qxf-file" type="file" accept=".qxf">
         <button id="fc-qxf-import">Import</button>
+      </div>
+    </div>
+
+    <div id="modal-dmx-setup" class="modal hidden">
+      <div class="modal-content">
+        <h2>DMX Setup <button class="modal-close">x</button></h2>
+        <div id="ds-status-box" class="hint">Loading status...</div>
+
+        <fieldset>
+          <legend>Connect to DMX4ALL interface</legend>
+          <label>Port
+            <select id="ds-port-select"></select>
+          </label>
+          <label>Or type a port manually (e.g. COM3, /dev/ttyUSB0)
+            <input id="ds-port-manual" type="text" placeholder="COM3">
+          </label>
+          <button id="ds-refresh-ports" type="button">Refresh port list</button>
+          <label>Protocol
+            <select id="ds-protocol">
+              <option value="passthrough">passthrough (raw 512 bytes, try this first)</option>
+              <option value="framed">framed (header + count + data + footer)</option>
+            </select>
+          </label>
+          <label>Baud rate <input id="ds-baud" type="number" value="250000"></label>
+          <div class="btn-row">
+            <button id="ds-connect" class="primary-btn" type="button">Connect</button>
+            <button id="ds-disconnect" type="button">Disconnect (use simulator)</button>
+          </div>
+          <p class="hint">See docs/DMX4ALL_PROTOCOL.md -- the real byte protocol is unverified until you
+            confirm a fixture actually moves. A failed connect here falls back to the simulator; it never
+            crashes the backend, so it's safe to try different ports/protocols one after another.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Raw channel test (bypasses fixtures/groups)</legend>
+          <p class="hint">Hardcode one channel to confirm the wire is actually moving something --
+            e.g. set a moving head's dimmer channel to 255 and look for the beam.</p>
+          <div class="grid2">
+            <label>Channel (1-512) <input id="ds-raw-channel" type="number" value="1" min="1" max="512"></label>
+            <label>Value (0-255) <input id="ds-raw-value" type="number" value="255" min="0" max="255"></label>
+          </div>
+          <div class="btn-row">
+            <button id="ds-raw-send" class="primary-btn" type="button">Send</button>
+            <button id="ds-raw-blackout" type="button">Blackout</button>
+          </div>
+        </fieldset>
       </div>
     </div>
 

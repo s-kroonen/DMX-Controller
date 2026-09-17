@@ -9,7 +9,9 @@ async function req(method, path, body) {
   const resp = await fetch(BASE + path, opts);
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(`${method} ${path} failed: ${resp.status} ${text}`);
+    let detail = text;
+    try { detail = JSON.parse(text).detail || text; } catch { /* not JSON, use raw text */ }
+    throw new Error(detail);
   }
   return resp.json();
 }
@@ -62,6 +64,11 @@ export const api = {
 
   dmxPorts: () => req("GET", "/dmx/ports"),
   dmxStatus: () => req("GET", "/dmx/status"),
+  dmxConnect: (port, protocol, baudRate) =>
+    req("POST", "/dmx/connect", { port, protocol, baud_rate: baudRate }),
+  dmxDisconnect: () => req("POST", "/dmx/disconnect"),
+  dmxRaw: (channel, value) => req("POST", "/dmx/raw", { channel, value }),
+  dmxRawBlackout: () => req("POST", "/dmx/raw/blackout"),
   snapshot: () => req("GET", "/snapshot"),
 };
 

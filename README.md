@@ -49,14 +49,30 @@ python -m pytest
 ### Connecting the real DMX4ALL dongle
 
 By default the backend runs against `SimulatedDmxOutput` (no hardware
-needed -- useful for building rooms/fixtures/animations at a desk). To
-send real DMX, set environment variables before starting the backend:
+needed -- useful for building rooms/fixtures/animations at a desk).
+
+**Easiest path -- from the running UI, no restart needed:** start the
+backend normally, open **DMX Setup** in the top bar, pick (or type) the
+port, choose a protocol, and hit Connect. A failed attempt reports the
+error and falls back to the simulator automatically -- it never crashes
+the backend, so it's safe to try passthrough vs. framed, different baud
+rates, etc. one after another while you figure out what the dongle
+actually expects. The same panel has a **raw channel test** (set one
+channel's value directly, bypassing fixtures/groups entirely) for the
+"does anything move at all" sanity check before trusting anything built
+on top of the driver.
+
+**Alternative -- set it at startup via environment variables:**
 
 ```bash
 export DMX4ALL_PORT=/dev/ttyUSB0      # or COM3 on Windows
 export DMX4ALL_PROTOCOL=passthrough    # or "framed" -- see docs/DMX4ALL_PROTOCOL.md
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+A bad port here also falls back to the simulator instead of crashing the
+backend -- check `GET /api/dmx/status` (or the DMX Setup panel) for
+`connect_error` if lights aren't moving.
 
 **The DMX4ALL wire protocol is not yet verified against real hardware** --
 see `docs/DMX4ALL_PROTOCOL.md` for how to capture and confirm it, and the

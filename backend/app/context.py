@@ -7,6 +7,7 @@ call `reset_context()` between cases.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional
 
@@ -18,13 +19,25 @@ from .show.animation import Animation, AnimationPlayer
 from .show.engine import ShowEngine
 from .storage import Storage
 
+logger = logging.getLogger(__name__)
+
 
 class AppContext:
     def __init__(self):
         self.storage = Storage()
         self.library = FixtureLibrary(user_dir=self.storage.fixtures_dir)
         room = self.storage.load_room()
-        self.dmx = self._build_dmx_output()
+
+        # A bad/unplugged DMX4ALL port must never take the whole backend
+        # down with it -- this is the one thing standing between "no
+        # lights" and "no UI to fix it from", so any failure here falls
+        # back to the simulator and is surfaced via dmx_error/api/dmx/status
+        # instead of raising out of __init__ (which main.py's startup
+        # calls eagerly).
+        self.dmx_config: Optional[Dmx4AllConfig] = None
+        self.dmx_error: Optional[str] = None
+        self.dmx = self._build_initial_dmx_output()
+
         self.engine = ShowEngine(room, self.library, self.dmx)
         for group in self.storage.load_groups():
             self.engine.add_group(group)
@@ -32,16 +45,69 @@ class AppContext:
             a.id: a for a in self.storage.load_animations()
         }
         self.players: dict[str, AnimationPlayer] = {}
-        self.dmx.start()
+        self.dmx.start()  # no-op if _build_initial_dmx_output already started it
 
-    def _build_dmx_output(self) -> DmxOutput:
+    def _build_initial_dmx_output(self) -> DmxOutput:
         port = os.environ.get("DMX4ALL_PORT")
-        if port:
-            protocol = os.environ.get("DMX4ALL_PROTOCOL", "passthrough")
-            baud = int(os.environ.get("DMX4ALL_BAUD", "250000"))
-            config = Dmx4AllConfig(port=port, baud_rate=baud, protocol=protocol)  # type: ignore[arg-type]
-            return Dmx4AllOutput(config)
-        return SimulatedDmxOutput()
+        if not port:
+            return SimulatedDmxOutput()
+        protocol = os.environ.get("DMX4ALL_PROTOCOL", "passthrough")
+        baud = int(os.environ.get("DMX4ALL_BAUD", "250000"))
+        config = Dmx4AllConfig(port=port, baud_rate=baud, protocol=protocol)  # type: ignore[arg-type]
+        output, error = self._try_start_dmx4all(config)
+        if error:
+            self.dmx_error = error
+            logger.warning(
+                "DMX4ALL connect failed at startup (port=%s): %s -- falling back to simulator",
+                port, error,
+            )
+            return SimulatedDmxOutput()
+        self.dmx_config = config
+        return output
+
+    @staticmethod
+    def _try_start_dmx4all(config: Dmx4AllConfig) -> tuple[DmxOutput, Optional[str]]:
+        """Attempt to build and start a real DMX4ALL output. Never raises --
+        returns (output, None) on success or (a fresh unstarted
+        SimulatedDmxOutput, error message) on any failure (missing
+        pyserial, bad port name, device not plugged in, permission denied,
+        ...)."""
+        try:
+            output = Dmx4AllOutput(config)
+            output.start()
+        except Exception as exc:  # noqa: BLE001 -- surfaced via API, never crashes the app
+            return SimulatedDmxOutput(), str(exc)
+        return output, None
+
+    def connect_dmx4all(self, port: str, protocol: str = "passthrough",
+                         baud_rate: int = 250000) -> None:
+        """Swap the live DMX output to a real DMX4ALL interface, e.g. from
+        the UI's DMX Setup panel while iterating on port/protocol against
+        real hardware. Raises on failure -- the caller (the API route)
+        turns that into a 400 -- and leaves the previous output running
+        untouched so a bad attempt doesn't kill whatever was already
+        working."""
+        config = Dmx4AllConfig(port=port, baud_rate=baud_rate, protocol=protocol)  # type: ignore[arg-type]
+        new_output = Dmx4AllOutput(config)
+        new_output.start()  # raises here if the port can't be opened
+        self._swap_dmx_output(new_output)
+        self.dmx_config = config
+        self.dmx_error = None
+
+    def disconnect_dmx4all(self) -> None:
+        """Fall back to the simulator -- e.g. to free the COM port, or
+        after a failed hardware test."""
+        new_output = SimulatedDmxOutput()
+        new_output.start()
+        self._swap_dmx_output(new_output)
+        self.dmx_config = None
+        self.dmx_error = None
+
+    def _swap_dmx_output(self, new_output: DmxOutput) -> None:
+        old_output = self.dmx
+        self.dmx = new_output
+        self.engine.dmx = new_output
+        old_output.stop()
 
     # -- persistence --------------------------------------------------
 

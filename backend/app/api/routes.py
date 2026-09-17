@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..context import get_context
-from ..dmx.dmx4all import list_serial_ports
+from ..dmx.dmx4all import Dmx4AllOutput, list_serial_ports
 from ..fixtures.qxf_import import parse_qxf
 from ..fixtures.schema import CustomChannel, FixtureProfile
 from ..groups.model import Group
@@ -518,9 +518,75 @@ def dmx_ports():
     return list_serial_ports()
 
 
+def _dmx_status_payload(ctx) -> dict:
+    status = ctx.dmx.status()
+    status["mode"] = "dmx4all" if isinstance(ctx.dmx, Dmx4AllOutput) else "simulator"
+    status["connect_error"] = ctx.dmx_error
+    if ctx.dmx_config is not None:
+        status["port"] = ctx.dmx_config.port
+        status["protocol"] = ctx.dmx_config.protocol
+        status["baud_rate"] = ctx.dmx_config.baud_rate
+    else:
+        status["port"] = None
+        status["protocol"] = None
+        status["baud_rate"] = None
+    return status
+
+
 @router.get("/dmx/status")
 def dmx_status():
-    return get_context().dmx.status()
+    return _dmx_status_payload(get_context())
+
+
+class DmxConnectIn(BaseModel):
+    port: str
+    protocol: str = "passthrough"
+    baud_rate: int = 250000
+
+
+@router.post("/dmx/connect")
+def dmx_connect(payload: DmxConnectIn):
+    """Swap the live output to a real DMX4ALL interface without
+    restarting the backend -- for iterating on port/protocol/baud
+    against real hardware from the UI's DMX Setup panel. A failed
+    attempt leaves whatever was running (simulator or a previously
+    working connection) untouched."""
+    ctx = get_context()
+    if payload.protocol not in ("passthrough", "framed"):
+        raise HTTPException(400, f"unknown protocol {payload.protocol!r}")
+    try:
+        ctx.connect_dmx4all(payload.port, payload.protocol, payload.baud_rate)
+    except Exception as exc:  # noqa: BLE001 -- surfaced to the caller, never a 500 crash
+        raise HTTPException(400, f"failed to connect to {payload.port!r}: {exc}")
+    return _dmx_status_payload(ctx)
+
+
+@router.post("/dmx/disconnect")
+def dmx_disconnect():
+    ctx = get_context()
+    ctx.disconnect_dmx4all()
+    return _dmx_status_payload(ctx)
+
+
+class RawChannelIn(BaseModel):
+    channel: int
+    value: int
+
+
+@router.post("/dmx/raw")
+def dmx_raw(payload: RawChannelIn):
+    """Bypass fixtures/groups entirely and hardcode one channel -- the
+    validation step from docs/DMX4ALL_PROTOCOL.md: e.g. set a moving
+    head's dimmer channel to 255 and confirm the beam turns on before
+    trusting anything built on top of the driver."""
+    get_context().dmx.set_channel(payload.channel, payload.value)
+    return {"ok": True}
+
+
+@router.post("/dmx/raw/blackout")
+def dmx_raw_blackout():
+    get_context().dmx.blackout()
+    return {"ok": True}
 
 
 @router.get("/snapshot")
