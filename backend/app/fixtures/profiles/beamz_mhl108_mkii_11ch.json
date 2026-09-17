@@ -1,0 +1,25 @@
+{
+  "id": "beamz-mhl108-mkii-11ch",
+  "name": "Beamz MHL108 MKII",
+  "manufacturer": "Beamz",
+  "mode": "11ch",
+  "channel_count": 11,
+  "fixture_type": "moving_head",
+  "channels": {
+    "pan": 1,
+    "pan_fine": 2,
+    "tilt": 3,
+    "tilt_fine": 4,
+    "dimmer": 5,
+    "red": 6,
+    "green": 7,
+    "blue": 8,
+    "macro": 9,
+    "strobe": 10,
+    "mode": 11
+  },
+  "custom_channels": [],
+  "pan_range_deg": 540.0,
+  "tilt_range_deg": 270.0,
+  "defaults": { "macro": 0, "mode": 0, "strobe": 255 }
+}

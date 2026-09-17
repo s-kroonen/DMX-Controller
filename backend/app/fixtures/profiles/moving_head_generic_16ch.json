@@ -1,0 +1,30 @@
+{
+  "id": "generic-moving-head-16ch",
+  "name": "Generic Moving Head (16ch)",
+  "manufacturer": "Generic",
+  "mode": "16ch",
+  "channel_count": 16,
+  "fixture_type": "moving_head",
+  "channels": {
+    "pan": 1,
+    "pan_fine": 2,
+    "tilt": 3,
+    "tilt_fine": 4,
+    "color_wheel": 5,
+    "gobo_wheel": 6,
+    "gobo_rotation": 7,
+    "prism": 8,
+    "focus": 9,
+    "zoom": 10,
+    "shutter": 11,
+    "dimmer": 12,
+    "red": 13,
+    "green": 14,
+    "blue": 15,
+    "mode": 16
+  },
+  "custom_channels": [],
+  "pan_range_deg": 540.0,
+  "tilt_range_deg": 270.0,
+  "defaults": { "shutter": 255, "dimmer": 0, "mode": 0 }
+}

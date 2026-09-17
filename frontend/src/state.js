@@ -1,0 +1,63 @@
+// Shared client-side state: cached room/groups/profiles + current selection.
+// Selection can hold multiple fixture ids and/or group ids at once; every
+// control panel action resolves against the whole selection so you can
+// e.g. select a fixture and a group together and set color on both.
+
+export const state = {
+  room: { name: "", dimensions: { width: 10, depth: 10, height: 4 }, fixtures: [], safety_zones: [] },
+  groups: [],
+  profiles: [],
+  fixtureState: {},
+  dmxStatus: {},
+  selection: new Set(), // fixture ids and/or group ids
+
+  fixtureById(id) {
+    return this.room.fixtures.find((f) => f.id === id);
+  },
+  profileById(id) {
+    return this.profiles.find((p) => p.id === id);
+  },
+  groupById(id) {
+    return this.groups.find((g) => g.id === id);
+  },
+
+  isSelected(id) {
+    return this.selection.has(id);
+  },
+
+  toggleSelection(id, exclusive) {
+    if (exclusive) {
+      const wasOnly = this.selection.size === 1 && this.selection.has(id);
+      this.selection.clear();
+      if (!wasOnly) this.selection.add(id);
+    } else if (this.selection.has(id)) {
+      this.selection.delete(id);
+    } else {
+      this.selection.add(id);
+    }
+  },
+
+  // A selection may reference groups; expand to the concrete fixture ids
+  // for anything that needs to inspect real fixture data (e.g. custom
+  // channel sliders, profile lookups).
+  expandedFixtureIds() {
+    const ids = new Set();
+    for (const sel of this.selection) {
+      const group = this.groupById(sel);
+      if (group) {
+        group.fixture_ids.forEach((fid) => ids.add(fid));
+      } else {
+        ids.add(sel);
+      }
+    }
+    return [...ids];
+  },
+};
+
+export const listeners = [];
+export function onStateChange(fn) {
+  listeners.push(fn);
+}
+export function notifyStateChange() {
+  listeners.forEach((fn) => fn());
+}

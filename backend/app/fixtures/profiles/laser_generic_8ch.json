@@ -1,0 +1,24 @@
+{
+  "id": "generic-laser-8ch",
+  "name": "Generic DMX Laser (8ch)",
+  "manufacturer": "Generic",
+  "mode": "8ch",
+  "channel_count": 8,
+  "fixture_type": "laser",
+  "channels": {
+    "mode": 1,
+    "pan": 2,
+    "tilt": 3,
+    "color_wheel": 4,
+    "gobo_wheel": 5,
+    "zoom": 6,
+    "strobe": 7,
+    "dimmer": 8
+  },
+  "custom_channels": [
+    { "channel": 1, "label": "Pattern/Mode", "default": 0, "min_value": 0, "max_value": 255 }
+  ],
+  "pan_range_deg": 180.0,
+  "tilt_range_deg": 90.0,
+  "defaults": { "mode": 0, "strobe": 0, "dimmer": 255 }
+}

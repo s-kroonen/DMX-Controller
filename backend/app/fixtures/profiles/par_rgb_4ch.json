@@ -1,0 +1,18 @@
+{
+  "id": "generic-par-rgb-4ch",
+  "name": "Generic RGB PAR (4ch)",
+  "manufacturer": "Generic",
+  "mode": "4ch",
+  "channel_count": 4,
+  "fixture_type": "par",
+  "channels": {
+    "dimmer": 1,
+    "red": 2,
+    "green": 3,
+    "blue": 4
+  },
+  "custom_channels": [],
+  "pan_range_deg": null,
+  "tilt_range_deg": null,
+  "defaults": { "dimmer": 255 }
+}
