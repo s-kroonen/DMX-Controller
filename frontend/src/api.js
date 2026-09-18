@@ -64,9 +64,13 @@ export const api = {
 
   dmxPorts: () => req("GET", "/dmx/ports"),
   dmxStatus: () => req("GET", "/dmx/status"),
-  dmxConnect: (port, protocol, baudRate) =>
-    req("POST", "/dmx/connect", { port, protocol, baud_rate: baudRate }),
+  dmxConnect: (port, baudRate) =>
+    req("POST", "/dmx/connect", { port, baud_rate: baudRate }),
   dmxDisconnect: () => req("POST", "/dmx/disconnect"),
+  dmxReconnect: (killOtherHolders = false) =>
+    req("POST", "/dmx/reconnect", { kill_other_holders: killOtherHolders }),
+  dmxHolders: () => req("GET", "/dmx/holders"),
+  dmxKillHolders: () => req("POST", "/dmx/kill-holders"),
   dmxRaw: (channel, value) => req("POST", "/dmx/raw", { channel, value }),
   dmxRawBlackout: () => req("POST", "/dmx/raw/blackout"),
   snapshot: () => req("GET", "/snapshot"),

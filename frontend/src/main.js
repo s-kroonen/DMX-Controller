@@ -8,7 +8,7 @@ import { initSafetyModal } from "./safety.js";
 import { initAnimationsModal } from "./animations.js";
 import { initRoomShapeModal } from "./roomShape.js";
 import { initRoomObjectsModal } from "./roomObjects.js";
-import { initDmxSetupModal } from "./dmxSetup.js";
+import { initDmxSetupModal, reconnectDmx } from "./dmxSetup.js";
 import { initScene3D } from "./scene3d.js";
 import { loadInitialData } from "./main_data.js";
 
@@ -23,7 +23,14 @@ function initModalCloseOnBackdrop() {
 function updateDmxStatusPill() {
   const pill = document.getElementById("dmx-status");
   const status = state.dmxStatus || {};
-  if (status.running) {
+  pill.onclick = null;
+  pill.style.cursor = "";
+  if (status.link_lost) {
+    pill.textContent = "DMX: LINK LOST -- click to reconnect";
+    pill.className = "status-pill error";
+    pill.style.cursor = "pointer";
+    pill.onclick = () => reconnectDmx(false);
+  } else if (status.running) {
     pill.textContent = `DMX: running (${status.frames_sent || 0} frames${status.last_frame_error ? ", ERROR" : ""})`;
     pill.className = "status-pill " + (status.last_frame_error ? "error" : "ok");
   } else {

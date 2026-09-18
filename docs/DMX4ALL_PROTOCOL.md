@@ -1,65 +1,58 @@
-# DMX4ALL Mini-USB Interface — protocol investigation notes
+# DMX4ALL Mini-USB-DMX interface -- protocol (verified on hardware)
 
-The DMX4ALL Mini-USB interface enumerates as a virtual COM port but does not
-speak Enttec's "Open DMX USB" / DMX-USB-PRO framing. Nobody has captured the
-real byte stream for this project yet — this file tracks how to do that and
-what to try in the meantime. The driver that consumes this is
-`backend/app/dmx/dmx4all.py`; only that file needs to change once the real
-protocol is known.
+Device: FTDI VID `0403` / PID `C850`, virtual COM port (COM7 here). The `I`
+command reports `USB DMX-Interface V3.36 (c) 2000-2004 Markus Siwek`.
+Reference: *DMX4ALL PC-Interface Interface-Commands* (manufacturer PDF, 2011).
 
-## How to capture the real protocol
+38400 baud, 8N1, no handshake. Commands we use:
 
-1. **USB capture (best option).** On Windows, use Wireshark with USBPcap
-   enabled, filter to the DMX4ALL's USB device, and run FreeStyler or
-   DMX-Configurator (whichever officially supports the dongle) driving a
-   fixture through a simple, recognizable pattern (e.g. dimmer channel 1
-   sweeping 0→255). The captured bulk/interrupt OUT transfers are the exact
-   bytes sent per frame. Compare frame lengths and headers across a few
-   frames to find the fixed vs. variable parts.
+| Purpose | Send | Reply |
+|---|---|---|
+| Connection check | `C?` | `G` |
+| **Block write (our output path)** | `FF <start_lo> <start_hi> <count> <data...>` (0-based start, count <= 255) | `G` |
+| Write one channel (ASCII) | `C005L240` (0-based channel, value) | `G` |
+| Read a channel back | `C005?` | `240G` |
+| Blackout on / off / query | `B1` / `B0` / `B?` | `G` / `G` / `0G`,`1G` |
+| Number of DMX-OUT slots | `N?` | e.g. `224G` |
 
-2. **Serial capture (if it truly is a plain virtual COM port).** On Linux/
-   macOS, a null-modem or a tool like `socat`/`com0com` can sit between the
-   vendor app and the device to log raw bytes — only works if the OS driver
-   doesn't require a proprietary kernel-mode component.
+Manufacturer example: channels 10-15 = 100,120,140,150,255,10 ->
+`FF 09 00 06 64 78 8C 96 FF 0A`.
 
-3. **Prior art.** Check OLA (Open Lighting Architecture) plugins and
-   hobbyist GitHub repos for existing DMX4ALL / compatible-vendor USB-DMX
-   implementations before reverse engineering from scratch — someone may
-   have already done this.
+The interface generates the DMX512 signal itself and holds the last value of
+every slot, so only changes need sending. `Dmx4AllOutput` writes changed runs
+as acknowledged blocks, does a slow full refresh of the low channels, and
+raises if any block isn't answered with `G`.
 
-## What to look for once you have a capture
+## Things that bit us on real hardware
 
-- Baud rate the virtual COM port is opened at (try 250000 first — the DMX
-  bus rate — then whatever the vendor software actually requests).
-- Fixed header bytes (many vendor protocols start with a magic byte or two).
-- Whether channel count is transmitted, or always assumed to be 512.
-- Whether there's a checksum byte and how it's computed (sum, XOR, CRC).
-- Fixed footer/terminator byte(s).
-- Whether it always sends a full 512-channel frame or only up to the
-  highest non-zero channel used.
+- **Blackout.** The interface can be left in blackout (`B?` -> `1G`), which
+  forces all outputs to zero regardless of what is written. The driver sends
+  its full state and then `B0` on every connect.
+- **Fast mode does not work on this firmware.** The PDF also lists
+  unacknowledged `E2 <ch> <val>` / `E3 <ch> <val>` single-channel writes
+  (used by the ofxDmx4All addon). On V3.36 they do nothing, and an earlier
+  version of this driver that used them left the device buffer full of its own
+  header bytes (`226, 31, 0, 226, 32, 255, ...`), which fixtures saw as random
+  values (a Beamz MHL108 kept falling into auto mode). Don't reintroduce them.
+- **XLR pin assignment.** The interface has a setup menu (`S`; options
+  `1` 19200 baud, `2` 38400 baud, `3` International pinout, `4` Martin pinout;
+  `I` shows the current one). Ours was on **Martin**, which swaps the data
+  lines versus standard DMX: buffer and blackout were all correct but the
+  fixtures stayed dark. Fixed by `S` then `3` (stored on the dongle, persists
+  across replugs). `S` leaves the dongle waiting for a key -- it answers
+  nothing, not even `C?`, until you pick an option.
+- **Verify with read-back, not by eyeballing lights.** `GET /api/dmx/readback?channels=1-40`
+  returns what the dongle holds next to what the backend thinks it sent.
+- Only one process can hold the COM port; see the DMX Setup panel's Reconnect
+  and "Kill other USB/DMX processes" buttons.
 
-## Current implementation status
+Implementation: `backend/app/dmx/dmx4all.py` (the only file that touches the wire).
 
-`Dmx4AllOutput` in `backend/app/dmx/dmx4all.py` implements two candidate
-framings, selectable via `Dmx4AllConfig.protocol`:
+## Hardware validation checklist
 
-- `"passthrough"` — raw 512 bytes, no framing, DMX-bus baud rate. Try this
-  first; some USB-DMX bridges genuinely are this simple.
-- `"framed"` — `header + channel_count(u16 LE) + 512 data bytes +
-  [checksum] + footer`, with header/footer/checksum all configurable. A
-  reasonable starting guess shaped like Enttec/uDMX-style protocols if
-  passthrough doesn't move the fixture.
-
-Until validated, run the backend with `SimulatedDmxOutput` (the default)
-for all UI/animation/IK development — it behaves identically from the API
-layer up, so nothing above the DMX driver needs to change once the real
-protocol is confirmed and wired in via `Dmx4AllOutput`.
-
-## Validation checklist against the real MHL108
-
-- [ ] Port opens without error at the chosen baud rate.
-- [ ] Hardcoding dimmer channel to 255 turns the fixture's beam on.
-- [ ] Hardcoding pan/tilt channels sweeps smoothly, not in visible steps,
-      at the configured frame rate (try 30–44 Hz).
-- [ ] Frame rate stays stable under sustained transmission (no drift/
-      stutter after a few minutes).
+- [x] Port opens at 38400 and answers `C?` with `G`.
+- [x] Block writes are acknowledged and read back identically.
+- [x] Blackout is released on connect (`B?` -> `0G`).
+- [ ] All three fixtures show red.
+- [ ] Beamz stays out of auto mode.
+- [ ] Pan/tilt sweep smoothly (16-bit fine channels).

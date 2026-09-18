@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from ..context import get_context
 from ..dmx.dmx4all import Dmx4AllOutput, list_serial_ports
+from ..dmx.usb_procs import find_holders
 from ..fixtures.qxf_import import parse_qxf
 from ..fixtures.schema import CustomChannel, FixtureProfile
 from ..groups.model import Group
@@ -522,13 +523,15 @@ def _dmx_status_payload(ctx) -> dict:
     status = ctx.dmx.status()
     status["mode"] = "dmx4all" if isinstance(ctx.dmx, Dmx4AllOutput) else "simulator"
     status["connect_error"] = ctx.dmx_error
+    status.setdefault("link_lost", False)
+    last = ctx.dmx_config or ctx.last_dmx_config
+    status["last_port"] = last.port if last else None
+    status["can_reconnect"] = last is not None
     if ctx.dmx_config is not None:
         status["port"] = ctx.dmx_config.port
-        status["protocol"] = ctx.dmx_config.protocol
         status["baud_rate"] = ctx.dmx_config.baud_rate
     else:
         status["port"] = None
-        status["protocol"] = None
         status["baud_rate"] = None
     return status
 
@@ -540,25 +543,87 @@ def dmx_status():
 
 class DmxConnectIn(BaseModel):
     port: str
-    protocol: str = "passthrough"
-    baud_rate: int = 250000
+    baud_rate: int = 38400
 
 
 @router.post("/dmx/connect")
 def dmx_connect(payload: DmxConnectIn):
     """Swap the live output to a real DMX4ALL interface without
-    restarting the backend -- for iterating on port/protocol/baud
-    against real hardware from the UI's DMX Setup panel. A failed
+    restarting the backend -- from the UI's DMX Setup panel. A failed
     attempt leaves whatever was running (simulator or a previously
     working connection) untouched."""
     ctx = get_context()
-    if payload.protocol not in ("passthrough", "framed"):
-        raise HTTPException(400, f"unknown protocol {payload.protocol!r}")
     try:
-        ctx.connect_dmx4all(payload.port, payload.protocol, payload.baud_rate)
+        ctx.connect_dmx4all(payload.port, payload.baud_rate)
     except Exception as exc:  # noqa: BLE001 -- surfaced to the caller, never a 500 crash
         raise HTTPException(400, f"failed to connect to {payload.port!r}: {exc}")
     return _dmx_status_payload(ctx)
+
+
+class DmxReconnectIn(BaseModel):
+    kill_other_holders: bool = False
+
+
+@router.post("/dmx/reconnect")
+def dmx_reconnect(payload: DmxReconnectIn = DmxReconnectIn()):
+    """Re-open the last-used DMX4ALL port (after an unplug, a stalled write,
+    or "Access is denied"), optionally killing other processes that hold
+    the port first."""
+    ctx = get_context()
+    try:
+        killed = ctx.reconnect_dmx4all(kill_other_holders=payload.kill_other_holders)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"reconnect failed: {exc}")
+    status = _dmx_status_payload(ctx)
+    status["killed"] = killed
+    return status
+
+
+@router.get("/dmx/holders")
+def dmx_holders():
+    """Processes that could be holding the dongle (what kill-holders would kill)."""
+    return find_holders()
+
+
+@router.post("/dmx/kill-holders")
+def dmx_kill_holders():
+    """Kill every other process that may be holding the DMX interface --
+    lighting apps (FreeStyler, DMX-Configurator, ...) and stray copies of
+    this backend. Frees our own handle first so it isn't the thing in the
+    way; press Reconnect afterwards."""
+    ctx = get_context()
+    killed = ctx.kill_usb_holders(release_own_port=True)
+    status = _dmx_status_payload(ctx)
+    status["killed"] = killed
+    return status
+
+
+@router.get("/dmx/readback")
+def dmx_readback(channels: str = "1-16"):
+    """What the *dongle itself* is holding (not what we think we sent) --
+    e.g. `?channels=6,7,20,21,33,34` or `?channels=1-16`. Also reports the
+    interface's own blackout flag, which forces all outputs to zero."""
+    ctx = get_context()
+    if not isinstance(ctx.dmx, Dmx4AllOutput):
+        raise HTTPException(400, "not connected to a DMX4ALL interface")
+    wanted: list[int] = []
+    for part in channels.split(","):
+        part = part.strip()
+        if "-" in part:
+            lo, hi = part.split("-", 1)
+            wanted += range(int(lo), int(hi) + 1)
+        elif part:
+            wanted.append(int(part))
+    if not wanted or len(wanted) > 128 or any(not 1 <= c <= 512 for c in wanted):
+        raise HTTPException(400, "channels must be 1..128 values within 1-512")
+    try:
+        return {
+            "blackout": ctx.dmx.read_blackout(),
+            "device": {c: ctx.dmx.read_back(c) for c in wanted},
+            "ours": {c: ctx.dmx.get_channel(c) for c in wanted},
+        }
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"read-back failed: {exc}")
 
 
 @router.post("/dmx/disconnect")

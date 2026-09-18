@@ -14,6 +14,7 @@ from typing import Optional
 from .dmx.dmx4all import Dmx4AllConfig, Dmx4AllOutput
 from .dmx.interface import DmxOutput
 from .dmx.simulator import SimulatedDmxOutput
+from .dmx.usb_procs import kill_holders
 from .fixtures.library import FixtureLibrary
 from .show.animation import Animation, AnimationPlayer
 from .show.engine import ShowEngine
@@ -35,6 +36,9 @@ class AppContext:
         # instead of raising out of __init__ (which main.py's startup
         # calls eagerly).
         self.dmx_config: Optional[Dmx4AllConfig] = None
+        # Last config we tried to use, kept after a failure/disconnect so the
+        # Reconnect button knows where to go back to.
+        self.last_dmx_config: Optional[Dmx4AllConfig] = None
         self.dmx_error: Optional[str] = None
         self.dmx = self._build_initial_dmx_output()
 
@@ -51,9 +55,9 @@ class AppContext:
         port = os.environ.get("DMX4ALL_PORT")
         if not port:
             return SimulatedDmxOutput()
-        protocol = os.environ.get("DMX4ALL_PROTOCOL", "passthrough")
-        baud = int(os.environ.get("DMX4ALL_BAUD", "250000"))
-        config = Dmx4AllConfig(port=port, baud_rate=baud, protocol=protocol)  # type: ignore[arg-type]
+        baud = int(os.environ.get("DMX4ALL_BAUD", "38400"))
+        config = Dmx4AllConfig(port=port, baud_rate=baud)
+        self.last_dmx_config = config
         output, error = self._try_start_dmx4all(config)
         if error:
             self.dmx_error = error
@@ -79,35 +83,83 @@ class AppContext:
             return SimulatedDmxOutput(), str(exc)
         return output, None
 
-    def connect_dmx4all(self, port: str, protocol: str = "passthrough",
-                         baud_rate: int = 250000) -> None:
+    def connect_dmx4all(self, port: str, baud_rate: int = 38400) -> None:
         """Swap the live DMX output to a real DMX4ALL interface, e.g. from
-        the UI's DMX Setup panel while iterating on port/protocol against
-        real hardware. Raises on failure -- the caller (the API route)
-        turns that into a 400 -- and leaves the previous output running
-        untouched so a bad attempt doesn't kill whatever was already
-        working."""
-        config = Dmx4AllConfig(port=port, baud_rate=baud_rate, protocol=protocol)  # type: ignore[arg-type]
-        new_output = Dmx4AllOutput(config)
-        new_output.start()  # raises here if the port can't be opened
-        self._swap_dmx_output(new_output)
-        self.dmx_config = config
-        self.dmx_error = None
+        the UI's DMX Setup panel. Raises on failure -- the caller (the API
+        route) turns that into a 400. If a *different* output was running
+        it is left untouched; if the failed attempt needed the port that
+        the current output holds (same port), see _open_dmx4all."""
+        self._open_dmx4all(Dmx4AllConfig(port=port, baud_rate=baud_rate))
+
+    def reconnect_dmx4all(self, kill_other_holders: bool = False) -> list[dict]:
+        """Re-open the DMX4ALL port after an unplug / stall / "Access is
+        denied". Releases our own handle first (a COM port is exclusive, so
+        opening a second handle to the same port would fail against
+        ourselves), optionally kills other processes that may be holding
+        it, then reconnects with the last-used config. Returns the list of
+        killed processes. Raises on failure, leaving the simulator running
+        so the backend stays usable."""
+        config = self.dmx_config or self.last_dmx_config
+        if config is None:
+            raise RuntimeError("no DMX4ALL connection to reconnect -- use Connect first")
+        killed: list[dict] = []
+        if kill_other_holders:
+            killed = self.kill_usb_holders(release_own_port=True)
+        self._open_dmx4all(config)
+        return killed
+
+    def kill_usb_holders(self, release_own_port: bool = False) -> list[dict]:
+        """Kill other processes that may hold the dongle (lighting apps,
+        stray copies of this backend). Never touches this process."""
+        if release_own_port and isinstance(self.dmx, Dmx4AllOutput):
+            self._release_to_simulator()
+        return kill_holders()
 
     def disconnect_dmx4all(self) -> None:
         """Fall back to the simulator -- e.g. to free the COM port, or
         after a failed hardware test."""
-        new_output = SimulatedDmxOutput()
-        new_output.start()
-        self._swap_dmx_output(new_output)
+        self._swap_dmx_output(self._fresh_simulator(self.dmx))
         self.dmx_config = None
         self.dmx_error = None
 
-    def _swap_dmx_output(self, new_output: DmxOutput) -> None:
+    def _open_dmx4all(self, config: Dmx4AllConfig) -> None:
+        old = self.dmx
+        holds_same_port = isinstance(old, Dmx4AllOutput) and old.config.port == config.port
+        if holds_same_port:
+            old.stop()  # release the exclusive COM port before re-opening it
+        try:
+            new_output = Dmx4AllOutput(config)
+            new_output._buffer = bytearray(old.snapshot())  # keep channel state across the swap
+            new_output.start()  # raises here if the port can't be opened / doesn't handshake
+        except Exception as exc:  # noqa: BLE001
+            self.last_dmx_config = config
+            if holds_same_port:
+                self._swap_dmx_output(self._fresh_simulator(old), stop_old=False)
+                self.dmx_config = None
+                self.dmx_error = str(exc)
+            raise
+        self._swap_dmx_output(new_output, stop_old=not holds_same_port)
+        self.dmx_config = config
+        self.last_dmx_config = config
+        self.dmx_error = None
+
+    def _release_to_simulator(self) -> None:
+        self._swap_dmx_output(self._fresh_simulator(self.dmx))
+        self.dmx_config = None
+
+    @staticmethod
+    def _fresh_simulator(previous: DmxOutput) -> SimulatedDmxOutput:
+        sim = SimulatedDmxOutput()
+        sim._buffer = bytearray(previous.snapshot())
+        sim.start()
+        return sim
+
+    def _swap_dmx_output(self, new_output: DmxOutput, stop_old: bool = True) -> None:
         old_output = self.dmx
         self.dmx = new_output
         self.engine.dmx = new_output
-        old_output.stop()
+        if stop_old:
+            old_output.stop()
 
     # -- persistence --------------------------------------------------
 

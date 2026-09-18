@@ -187,20 +187,18 @@
             <input id="ds-port-manual" type="text" placeholder="COM3">
           </label>
           <button id="ds-refresh-ports" type="button">Refresh port list</button>
-          <label>Protocol
-            <select id="ds-protocol">
-              <option value="passthrough">passthrough (raw 512 bytes, try this first)</option>
-              <option value="framed">framed (header + count + data + footer)</option>
-            </select>
-          </label>
-          <label>Baud rate <input id="ds-baud" type="number" value="250000"></label>
+          <label>Baud rate <input id="ds-baud" type="number" value="38400"></label>
           <div class="btn-row">
             <button id="ds-connect" class="primary-btn" type="button">Connect</button>
             <button id="ds-disconnect" type="button">Disconnect (use simulator)</button>
           </div>
-          <p class="hint">See docs/DMX4ALL_PROTOCOL.md -- the real byte protocol is unverified until you
-            confirm a fixture actually moves. A failed connect here falls back to the simulator; it never
-            crashes the backend, so it's safe to try different ports/protocols one after another.</p>
+          <div class="btn-row">
+            <button id="ds-reconnect" class="primary-btn" type="button">Reconnect</button>
+            <button id="ds-kill-holders" type="button">Kill other USB/DMX processes</button>
+          </div>
+          <div id="ds-holders" class="hint"></div>
+          <p class="hint">Connecting sends the DMX4ALL "C?" handshake and expects "G" back, so a wrong port is reported
+            here instead of silently doing nothing. A failed connect falls back to the simulator; it never crashes the backend.</p>
         </fieldset>
 
         <fieldset>

@@ -26,6 +26,23 @@ never touch a serial port directly. Swap `SimulatedDmxOutput` for
 
 ## Running it
 
+**Windows (recommended): one command from the repo root**
+
+```powershell
+.un.ps1                # real dongle on COM7 -> http://localhost:8000
+.un.ps1 -Port COM5     # a different COM port
+.un.ps1 -Sim           # no hardware (simulated output)
+.un.ps1 -Lan           # also reachable from a phone/tablet on the LAN
+```
+
+Only one process can hold the COM port. If the UI says the port is busy, close
+FreeStyler / DMX-Configurator / any other copy of this backend (or use **DMX
+Setup -> Kill other USB/DMX processes**), then **Reconnect**. Your patch,
+groups and room are saved in `backend/data/` (git-ignored). After pulling
+frontend changes, hard-refresh the browser (Ctrl+Shift+R) -- the JS is cached.
+
+**Manual / other platforms:**
+
 ```bash
 cd backend
 python3 -m venv .venv
@@ -53,11 +70,9 @@ needed -- useful for building rooms/fixtures/animations at a desk).
 
 **Easiest path -- from the running UI, no restart needed:** start the
 backend normally, open **DMX Setup** in the top bar, pick (or type) the
-port, choose a protocol, and hit Connect. A failed attempt reports the
+port, and hit Connect (the driver does the DMX4ALL `C?`/`G` handshake). A failed attempt reports the
 error and falls back to the simulator automatically -- it never crashes
-the backend, so it's safe to try passthrough vs. framed, different baud
-rates, etc. one after another while you figure out what the dongle
-actually expects. The same panel has a **raw channel test** (set one
+the backend, so it's safe to try ports one after another. The same panel has a **raw channel test** (set one
 channel's value directly, bypassing fixtures/groups entirely) for the
 "does anything move at all" sanity check before trusting anything built
 on top of the driver.
@@ -65,8 +80,7 @@ on top of the driver.
 **Alternative -- set it at startup via environment variables:**
 
 ```bash
-export DMX4ALL_PORT=/dev/ttyUSB0      # or COM3 on Windows
-export DMX4ALL_PROTOCOL=passthrough    # or "framed" -- see docs/DMX4ALL_PROTOCOL.md
+export DMX4ALL_PORT=/dev/ttyUSB0      # or COM7 on Windows (baud defaults to 38400)
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -74,11 +88,9 @@ A bad port here also falls back to the simulator instead of crashing the
 backend -- check `GET /api/dmx/status` (or the DMX Setup panel) for
 `connect_error` if lights aren't moving.
 
-**The DMX4ALL wire protocol is not yet verified against real hardware** --
-see `docs/DMX4ALL_PROTOCOL.md` for how to capture and confirm it, and the
-validation checklist to run through with a real fixture (e.g. an MHL108)
-once you have the dongle plugged in. Only `backend/app/dmx/dmx4all.py`
-needs to change once the real byte format is confirmed.
+The DMX4ALL wire protocol (38400 baud, `C?`/`G` handshake, acknowledged
+block writes, blackout release) is documented in `docs/DMX4ALL_PROTOCOL.md`; the handshake is verified
+against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
 
 ## What's here
 
@@ -135,8 +147,8 @@ needs to change once the real byte format is confirmed.
 
 ## Known limitations / next steps
 
-- DMX4ALL protocol bytes are a best-effort placeholder (see above) until
-  validated against real hardware with a USB capture.
+- Light-level behaviour of the bundled profiles is unverified against real fixtures
+  except where noted in the profile.
 - Safety zones are still axis-aligned boxes (not arbitrary polygons) --
   covers the common cases from the design doc without a full BSP/mesh
   volume model. Room *floor shape* is a full arbitrary polygon now, but
