@@ -21,6 +21,10 @@
       <div id="dmx-status" class="status-pill">DMX: --</div>
       <div class="spacer"></div>
       <button id="btn-dmx-setup" class="toggle-btn">DMX Setup</button>
+      <div class="dropdown-wrap">
+        <button id="btn-windows-menu" class="toggle-btn">Windows &#9662;</button>
+        <div id="windows-menu-dropdown" class="dropdown-menu hidden"></div>
+      </div>
       <button id="btn-view-3d" class="toggle-btn active">3D View</button>
       <button id="btn-patch" class="toggle-btn">Patch</button>
       <button id="btn-fixture-creator" class="toggle-btn">Fixture Creator</button>
@@ -64,7 +68,7 @@
         <label>White <input type="range" min="0" max="255" value="0" id="rgb-white"></label>
         <input type="color" id="rgb-picker" value="#ff0000" />
         <div class="palette" id="rgb-palette"></div>
-        <label>Dimmer <input type="range" min="0" max="255" value="255" id="dimmer-slider"></label>
+        <div class="hint">Dimmer lives in the Strobe/Shutter window (light control), not here.</div>
       </div>
     </div>
 

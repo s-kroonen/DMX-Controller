@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { state, onStateChange } from "./state.js";
+import { initPanelWindows } from "./panelWindows.js";
 
 function currentTargetIds() {
   return [...state.selection];
@@ -12,16 +13,7 @@ function forEachTarget(fn) {
 }
 
 export function initPanels() {
-  makeDraggable(document.getElementById("panel-rgb"));
-  makeDraggable(document.getElementById("panel-strobe"));
-  makeDraggable(document.getElementById("panel-pantilt"));
-  makeDraggable(document.getElementById("panel-custom"));
-
-  document.querySelectorAll(".panel-close").forEach((btn) => {
-    btn.onclick = (e) => {
-      e.target.closest(".floating-panel").style.display = "none";
-    };
-  });
+  initPanelWindows();
 
   document.querySelectorAll(".toggle-btn").forEach((btn) => {
     if (btn.id === "btn-view-3d") {
@@ -36,37 +28,12 @@ export function initPanels() {
   onStateChange(renderCustomPanel);
 }
 
-function makeDraggable(panel) {
-  const header = panel.querySelector(".panel-header");
-  let dragging = false;
-  let offsetX = 0;
-  let offsetY = 0;
-
-  header.addEventListener("mousedown", (e) => {
-    if (e.target.classList.contains("panel-close")) return;
-    dragging = true;
-    const rect = panel.getBoundingClientRect();
-    offsetX = e.clientX - rect.left;
-    offsetY = e.clientY - rect.top;
-    e.preventDefault();
-  });
-  window.addEventListener("mousemove", (e) => {
-    if (!dragging) return;
-    panel.style.left = `${e.clientX - offsetX}px`;
-    panel.style.top = `${e.clientY - offsetY}px`;
-  });
-  window.addEventListener("mouseup", () => {
-    dragging = false;
-  });
-}
-
 function initRgbPanel() {
   const red = document.getElementById("rgb-red");
   const green = document.getElementById("rgb-green");
   const blue = document.getElementById("rgb-blue");
   const white = document.getElementById("rgb-white");
   const picker = document.getElementById("rgb-picker");
-  const dimmer = document.getElementById("dimmer-slider");
 
   const pushColor = () => {
     forEachTarget((id) =>
@@ -82,10 +49,6 @@ function initRgbPanel() {
     green.value = parseInt(hex.slice(3, 5), 16);
     blue.value = parseInt(hex.slice(5, 7), 16);
     pushColor();
-  });
-
-  dimmer.addEventListener("input", () => {
-    forEachTarget((id) => api.setDimmer(id, Number(dimmer.value)).catch(console.error));
   });
 
   const palette = document.getElementById("rgb-palette");

@@ -132,6 +132,16 @@ needs to change once the real byte format is confirmed.
   a safety zone editor; and a keyframe animation editor. Three.js is
   vendored locally (`frontend/vendor/three/`) so the controller runs with
   no internet access at the venue.
+  - Selecting exactly one fixture attaches a drag gizmo (XYZ arrows, like
+    a 3D-slicer/CAD tool) directly on it in the 3D view -- drag an axis
+    to reposition the fixture in room space; the new position is saved
+    once you release. Multi-select and group selections don't get a
+    gizmo (there's no single position to drag).
+  - Each floating control window remembers whether it's open/closed and
+    where you left it (localStorage, per browser) across a page refresh.
+    A closed window is never stranded -- the **Windows** menu in the top
+    bar lists every one with its current state and reopens it on click.
+    The 3D camera's position/orbit target persist the same way.
 
 ## Known limitations / next steps
 

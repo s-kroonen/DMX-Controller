@@ -9,6 +9,7 @@ import { initAnimationsModal } from "./animations.js";
 import { initRoomShapeModal } from "./roomShape.js";
 import { initRoomObjectsModal } from "./roomObjects.js";
 import { initDmxSetupModal } from "./dmxSetup.js";
+import { initWindowsMenu } from "./windowsMenu.js";
 import { initScene3D } from "./scene3d.js";
 import { loadInitialData } from "./main_data.js";
 
@@ -49,6 +50,7 @@ async function bootstrap() {
   await loadInitialData();
 
   initPanels();
+  initWindowsMenu();
   initPatchModal();
   initFixtureCreator();
   initRoomShapeModal();

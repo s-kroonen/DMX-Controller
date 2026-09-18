@@ -42,6 +42,32 @@ html, body, #app {
 .status-pill.ok { background: #1f4d2b; }
 .status-pill.error { background: #4d1f1f; }
 
+.dropdown-wrap { position: relative; }
+.dropdown-menu {
+  position: absolute;
+  top: 110%;
+  left: 0;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  min-width: 180px;
+  z-index: 30;
+  padding: 4px;
+}
+.dropdown-menu.hidden { display: none; }
+.dropdown-menu button {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 6px 8px;
+}
+.dropdown-menu button:hover { background: #2a2f36; }
+.dropdown-menu .win-state { color: var(--text-dim); font-size: 0.8em; }
+
 .toggle-btn, .primary-btn, .danger-btn, button {
   background: #2a2f36;
   color: var(--text);
