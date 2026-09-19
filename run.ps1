@@ -35,4 +35,13 @@ if ($Sim) {
 
 $bind = if ($Lan) { "0.0.0.0" } else { "127.0.0.1" }
 Write-Host "UI: http://localhost:$HttpPort   (Ctrl+C to stop)"
+if ($Lan) {
+    $addresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.InterfaceAlias -notmatch 'vEthernet|Loopback|Bluetooth' } |
+        Select-Object -ExpandProperty IPAddress
+    foreach ($ip in $addresses) { Write-Host "From another device on the network: http://${ip}:$HttpPort" }
+    Write-Host "There is no login: anyone on this network can control the lights. Use a trusted network."
+    Write-Host "If another device can't connect, allow the port through the Windows firewall (admin PowerShell, once):"
+    Write-Host "  New-NetFirewallRule -DisplayName 'DMX Controller' -Direction Inbound -Protocol TCP -LocalPort $HttpPort -Action Allow -Profile Private"
+}
 & .venv\Scripts\python.exe -m uvicorn app.main:app --host $bind --port $HttpPort
