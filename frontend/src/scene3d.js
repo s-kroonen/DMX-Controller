@@ -161,6 +161,8 @@ function reattachGizmoForMode() {
   let wantedObj = null;
   if (entry && gizmoMode === "pitch") {
     wantedObj = entry.pitchGroup;
+  } else if (entry && gizmoMode === "roll") {
+    wantedObj = entry.rollGroup;
   } else if (entry) {
     wantedObj = entry.group;
   } else if (selectedObjectId) {
@@ -179,6 +181,12 @@ function reattachGizmoForMode() {
     transformControls.setSpace("local"); // fixture's own (already-yawed) horizontal axis
     transformControls.showX = true;
     transformControls.showY = false;
+    transformControls.showZ = false;
+  } else if (gizmoMode === "roll") {
+    transformControls.setMode("rotate");
+    transformControls.setSpace("local"); // fixture's own front/aim axis
+    transformControls.showX = false;
+    transformControls.showY = true;
     transformControls.showZ = false;
   } else if (gizmoMode === "yaw") {
     transformControls.setMode("rotate");
@@ -203,6 +211,7 @@ function initGizmoToolbarUI() {
   document.getElementById("gizmo-mode-translate").onclick = () => setGizmoMode("translate");
   document.getElementById("gizmo-mode-yaw").onclick = () => setGizmoMode("yaw");
   document.getElementById("gizmo-mode-pitch").onclick = () => setGizmoMode("pitch");
+  document.getElementById("gizmo-mode-roll").onclick = () => setGizmoMode("roll");
   refreshGizmoToolbarUI();
 }
 
@@ -210,11 +219,14 @@ function refreshGizmoToolbarUI() {
   const translateBtn = document.getElementById("gizmo-mode-translate");
   const yawBtn = document.getElementById("gizmo-mode-yaw");
   const pitchBtn = document.getElementById("gizmo-mode-pitch");
+  const rollBtn = document.getElementById("gizmo-mode-roll");
   translateBtn.classList.toggle("active", gizmoMode === "translate");
   yawBtn.classList.toggle("active", gizmoMode === "yaw");
   pitchBtn.classList.toggle("active", gizmoMode === "pitch");
+  rollBtn.classList.toggle("active", gizmoMode === "roll");
   yawBtn.disabled = !gizmoAttachedFixtureId;
   pitchBtn.disabled = !gizmoAttachedFixtureId;
+  rollBtn.disabled = !gizmoAttachedFixtureId;
 }
 
 // Reads the fixture's CURRENT live transform (position from the outer
@@ -230,13 +242,14 @@ function persistGizmoFixtureTransform() {
   const pos = entry.group.position;
   const yawDeg = normalizeDeg(-THREE.MathUtils.radToDeg(entry.group.rotation.z));
   const pitchDeg = normalizeDeg(THREE.MathUtils.radToDeg(entry.pitchGroup.rotation.x) + 90);
+  const rollDeg = normalizeDeg(THREE.MathUtils.radToDeg(entry.rollGroup.rotation.y));
   api.updateFixture(fixture.id, {
     name: fixture.name,
     profile_id: fixture.profile_id,
     universe: fixture.universe,
     start_address: fixture.start_address,
     position: { x: round3(pos.x), y: round3(pos.y), z: round3(pos.z) },
-    orientation: { ...fixture.orientation, yaw_deg: round3(yawDeg), pitch_deg: round3(pitchDeg) },
+    orientation: { ...fixture.orientation, yaw_deg: round3(yawDeg), pitch_deg: round3(pitchDeg), roll_deg: round3(rollDeg) },
     group_ids: fixture.group_ids,
     inverted_pan: fixture.inverted_pan,
     inverted_tilt: fixture.inverted_tilt,
@@ -570,6 +583,7 @@ function updateFixtures() {
     const draggingPosition = draggingThis && gizmoMode === "translate";
     const draggingYaw = draggingThis && gizmoMode === "yaw";
     const draggingPitch = draggingThis && gizmoMode === "pitch";
+    const draggingRoll = draggingThis && gizmoMode === "roll";
 
     if (!draggingPosition) {
       entry.group.position.set(fixture.position.x, fixture.position.y, fixture.position.z);
@@ -588,6 +602,11 @@ function updateFixtures() {
     if (!draggingPitch) {
       const pitchRad = THREE.MathUtils.degToRad(fixture.orientation?.pitch_deg ?? 90);
       entry.pitchGroup.rotation.x = pitchRad - Math.PI / 2;
+    }
+    // Roll rotates around the fixture's own front/aim axis (local Y) --
+    // no backend convention to match, so roll_deg maps straight to radians.
+    if (!draggingRoll) {
+      entry.rollGroup.rotation.y = THREE.MathUtils.degToRad(fixture.orientation?.roll_deg || 0);
     }
 
     entry.bodyMaterial.color.set(state.isSelected(fixture.id) ? 0xffffff : entry.bodyMaterial.userData.baseColor);
@@ -625,9 +644,15 @@ function updateFixtures() {
     // undo pitch (pitchGroup's X rotation)
     const cosPitch = Math.cos(entry.pitchGroup.rotation.x);
     const sinPitch = Math.sin(entry.pitchGroup.rotation.x);
-    const localX = afterYawX;
-    const localY = afterYawY * cosPitch + afterYawZ * sinPitch;
-    const localZ = -afterYawY * sinPitch + afterYawZ * cosPitch;
+    const afterPitchX = afterYawX;
+    const afterPitchY = afterYawY * cosPitch + afterYawZ * sinPitch;
+    const afterPitchZ = -afterYawY * sinPitch + afterYawZ * cosPitch;
+    // undo roll (rollGroup's Y rotation)
+    const cosRoll = Math.cos(entry.rollGroup.rotation.y);
+    const sinRoll = Math.sin(entry.rollGroup.rotation.y);
+    const localX = afterPitchX * cosRoll - afterPitchZ * sinRoll;
+    const localY = afterPitchY;
+    const localZ = afterPitchX * sinRoll + afterPitchZ * cosRoll;
     positions.setXYZ(0, 0, 0, 0);
     positions.setXYZ(1, localX, localY, localZ);
     positions.needsUpdate = true;
@@ -715,13 +740,15 @@ function createFixtureMesh(fixture) {
 
   const pitchGroup = new THREE.Group();
   group.add(pitchGroup);
+  const rollGroup = new THREE.Group(); // rotates around the fixture's own front/aim axis (Y)
+  pitchGroup.add(rollGroup);
 
   const baseColor = 0x3a7bd5;
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: baseColor });
   bodyMaterial.userData.baseColor = baseColor;
 
   const bodyGroup = buildFixtureBody(fixtureType, bodyMaterial);
-  pitchGroup.add(bodyGroup);
+  rollGroup.add(bodyGroup);
 
   // Unmistakable front-direction indicator, independent of body shape, so
   // "where is the front" always has one clear answer regardless of how
@@ -732,7 +759,7 @@ function createFixtureMesh(fixture) {
   const arrow = new THREE.ArrowHelper(
     new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), 0.3, 0x33ff66, 0.09, 0.05
   );
-  pitchGroup.add(arrow);
+  rollGroup.add(arrow);
 
   const beamGeo = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0),
@@ -741,9 +768,9 @@ function createFixtureMesh(fixture) {
   const beam = new THREE.Line(beamGeo, new THREE.LineBasicMaterial({
     color: 0xffffff, transparent: true, opacity: 0.8,
   }));
-  pitchGroup.add(beam);
+  rollGroup.add(beam);
 
-  return { group, pitchGroup, bodyGroup, bodyMaterial, arrow, beam, profileId: fixture.profile_id };
+  return { group, pitchGroup, rollGroup, bodyGroup, bodyMaterial, arrow, beam, profileId: fixture.profile_id };
 }
 
 function onSceneClick(evt, container) {

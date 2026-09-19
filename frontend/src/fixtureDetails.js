@@ -114,6 +114,7 @@ function fillForm(fixture) {
   document.getElementById("fd-z").value = fixture.position.z;
   document.getElementById("fd-yaw").value = fixture.orientation.yaw_deg;
   document.getElementById("fd-pitch").value = fixture.orientation.pitch_deg;
+  document.getElementById("fd-roll").value = fixture.orientation.roll_deg || 0;
   document.getElementById("fd-invert-pan").checked = fixture.inverted_pan;
   document.getElementById("fd-invert-tilt").checked = fixture.inverted_tilt;
   document.getElementById("fd-pan-offset").value = fixture.pan_offset_deg || 0;
@@ -166,7 +167,7 @@ async function saveFixture() {
     orientation: {
       yaw_deg: Number(document.getElementById("fd-yaw").value),
       pitch_deg: Number(document.getElementById("fd-pitch").value),
-      roll_deg: 0,
+      roll_deg: Number(document.getElementById("fd-roll").value) || 0,
     },
     inverted_pan: document.getElementById("fd-invert-pan").checked,
     inverted_tilt: document.getElementById("fd-invert-tilt").checked,
