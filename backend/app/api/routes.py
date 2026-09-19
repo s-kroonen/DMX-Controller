@@ -141,10 +141,17 @@ class RoomIn(BaseModel):
 
 @router.put("/room")
 def update_room(payload: RoomIn):
+    """Redrawing the room shape only ever happens here (the 2D editor) --
+    never by dragging in the 3D view, which is fixtures/objects only.
+    Room.apply_shape() rescales every fixture, object, and safety zone
+    proportionally so they keep their relative placement when the shape
+    or height changes, instead of ending up outside the new walls."""
     ctx = get_context()
     ctx.engine.room.name = payload.name
-    ctx.engine.room.dimensions = RoomDimensions(**payload.dimensions.model_dump())
-    ctx.engine.room.floor_points = [Vec2(**p.model_dump()) for p in payload.floor_points]
+    ctx.engine.room.apply_shape(
+        [Vec2(**p.model_dump()) for p in payload.floor_points],
+        RoomDimensions(**payload.dimensions.model_dump()),
+    )
     ctx.persist_room()
     return ctx.engine.room.to_dict()
 

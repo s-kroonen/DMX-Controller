@@ -136,13 +136,22 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   keyframing raw pan/tilt directly.
 - **Room shape + objects** (`app/room/model.py`): a room is rarely a
   perfect rectangle, so `Room.floor_points` holds an arbitrary polygon
-  (any number of sides, drawn as a 2D floor plan in the **Room Shape**
-  editor) extruded up to a ceiling height for the 3D view; it falls back
-  to a simple width/depth rectangle until a shape is drawn. The
-  **Objects** editor adds visual/spatial reference objects into the scene
-  -- wall segments, person-scale markers (for a sense of scale), box
-  obstacles, and raised surfaces/platforms. These are purely visual
-  reference, unlike Safety Zones, which actually block beams.
+  (any number of sides, drawn -- and redrawn -- as a 2D floor plan in the
+  **Room Shape** editor, where you can click empty space to add a corner
+  or drag an existing one to move it) extruded up to a ceiling height for
+  the 3D view; it falls back to a simple width/depth rectangle until a
+  shape is drawn. Editing the room's shape is deliberately confined to
+  that 2D editor and never done in the 3D view: it's a bigger,
+  consequential action (it can move everything relative to it), so
+  `Room.apply_shape()` rescales every fixture, object, and safety zone
+  proportionally on save -- anchored on the floor's center -- so they
+  keep their relative placement instead of ending up outside the new
+  walls or floating at the wrong height. The **Objects** editor adds
+  visual/spatial reference objects into the scene -- wall segments,
+  person-scale markers (for a sense of scale), box obstacles, and raised
+  surfaces/platforms. These are purely visual reference, unlike Safety
+  Zones, which actually block beams; both are edited only through their
+  own modals for the same reason as the room shape.
 - **Web UI** (`frontend/`): draggable, overlaid RGB / strobe-shutter /
   pan-tilt / custom-channel control windows that all apply live to
   whatever fixture(s) or group is currently selected; a Three.js 3D scene
@@ -152,11 +161,13 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   a safety zone editor; and a keyframe animation editor. Three.js is
   vendored locally (`frontend/vendor/three/`) so the controller runs with
   no internet access at the venue.
-  - Selecting exactly one fixture attaches a drag gizmo (XYZ arrows, like
-    a 3D-slicer/CAD tool) directly on it in the 3D view -- drag an axis
-    to reposition the fixture in room space; the new position is saved
-    once you release. Multi-select and group selections don't get a
-    gizmo (there's no single position to drag).
+  - The 3D view is fixtures/objects only -- click a fixture (via the
+    sidebar) or a room object (person/box/surface -- walls need two
+    points, so they're not draggable this way) to attach a drag gizmo
+    (XYZ arrows, like a 3D-slicer/CAD tool) and reposition it; the new
+    position saves once you release. Multi-select and group selections
+    don't get a gizmo (there's no single position to drag). Room shape
+    and safety zones are never edited here -- see above for why.
   - Each floating control window remembers whether it's open/closed and
     where you left it (localStorage, per browser) across a page refresh.
     A closed window is never stranded -- the **Windows** menu in the top

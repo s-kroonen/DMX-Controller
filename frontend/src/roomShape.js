@@ -3,26 +3,54 @@ import { state } from "./state.js";
 import { reloadRoomAndGroups } from "./main_data.js";
 
 // A room is rarely a perfect rectangle. This is a plain 2D floor-plan
-// editor: click to place corners (any count, any shape, not necessarily
-// convex), and the 3D scene extrudes that outline up to the ceiling
-// height. Points are stored/sent in meters, room-space X/Y; the canvas
-// just maps a fixed pixels-per-meter scale around a center origin.
+// editor: click empty space to place a new corner, or drag an existing
+// one to move it -- any count of corners, any shape, not necessarily
+// convex. This is the ONLY place the room shape is edited; moving a
+// point here rescales fixtures/objects/zones proportionally on save
+// (Room.apply_shape() on the backend), which is too consequential an
+// action to do by dragging in the 3D view. That view is fixtures/objects
+// only. The 3D scene extrudes whatever outline is saved here up to the
+// ceiling height. Points are stored/sent in meters, room-space X/Y; the
+// canvas just maps a fixed pixels-per-meter scale around a center origin.
 
 const PX_PER_METER = 20;
+const HIT_RADIUS_PX = 10;
 let points = []; // [{x, y}] in meters
+let draggingIndex = null;
+let mouseDownPos = null;
 
 export function initRoomShapeModal() {
   document.getElementById("btn-room-shape").onclick = () => openModal();
   document.querySelector("#modal-room-shape .modal-close").onclick = () => closeModal();
 
   const canvas = document.getElementById("rs-canvas");
-  canvas.addEventListener("click", (evt) => {
-    const rect = canvas.getBoundingClientRect();
-    const px = evt.clientX - rect.left;
-    const py = evt.clientY - rect.top;
-    const meterX = (px - canvas.width / 2) / PX_PER_METER;
-    const meterY = (py - canvas.height / 2) / PX_PER_METER;
-    points.push({ x: round2(meterX), y: round2(meterY) });
+
+  canvas.addEventListener("mousedown", (evt) => {
+    const { px, py } = eventToPixels(canvas, evt);
+    mouseDownPos = { px, py };
+    draggingIndex = hitTestPoint(px, py);
+  });
+
+  window.addEventListener("mousemove", (evt) => {
+    if (draggingIndex === null) return;
+    const { px, py } = eventToPixels(canvas, evt);
+    points[draggingIndex] = pixelsToMeters(px, py);
+    redraw();
+  });
+
+  window.addEventListener("mouseup", (evt) => {
+    if (draggingIndex !== null) {
+      draggingIndex = null;
+      mouseDownPos = null;
+      return;
+    }
+    if (!mouseDownPos) return;
+    const { px, py } = eventToPixels(canvas, evt);
+    const moved = Math.hypot(px - mouseDownPos.px, py - mouseDownPos.py);
+    mouseDownPos = null;
+    if (moved > 4) return; // was a drag over empty canvas, not a click -- ignore
+    if (px < 0 || py < 0 || px > canvas.width || py > canvas.height) return; // released outside canvas
+    points.push(pixelsToMeters(px, py));
     redraw();
   });
 
@@ -35,6 +63,30 @@ export function initRoomShapeModal() {
     redraw();
   };
   document.getElementById("rs-save").onclick = submitRoomShape;
+}
+
+function eventToPixels(canvas, evt) {
+  const rect = canvas.getBoundingClientRect();
+  return { px: evt.clientX - rect.left, py: evt.clientY - rect.top };
+}
+
+function pixelsToMeters(px, py) {
+  const canvas = document.getElementById("rs-canvas");
+  return {
+    x: round2((px - canvas.width / 2) / PX_PER_METER),
+    y: round2((py - canvas.height / 2) / PX_PER_METER),
+  };
+}
+
+function hitTestPoint(px, py) {
+  const canvas = document.getElementById("rs-canvas");
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  for (let i = points.length - 1; i >= 0; i--) {
+    const x = cx + points[i].x * PX_PER_METER;
+    const y = cy + points[i].y * PX_PER_METER;
+    if (Math.hypot(px - x, py - y) <= HIT_RADIUS_PX) return i;
+  }
+  return null;
 }
 
 function round2(n) {

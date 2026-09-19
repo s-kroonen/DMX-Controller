@@ -231,9 +231,11 @@
     <div id="modal-room-shape" class="modal hidden">
       <div class="modal-content wide">
         <h2>Room Shape <button class="modal-close">x</button></h2>
-        <p class="hint">Rooms are rarely perfect rectangles. Click to place floor-plan corners in order
-          (any number of sides, any shape) -- the 3D view extrudes this outline up to the ceiling height below.
-          Leave it empty to keep a simple rectangle sized by width/depth.</p>
+        <p class="hint">Rooms are rarely perfect rectangles. Click empty space to place a new corner in order,
+          or drag an existing corner to move it (any number of sides, any shape) -- the 3D view extrudes this
+          outline up to the ceiling height below. Fixtures, objects, and safety zones move/rescale with the
+          room when you save a changed shape, so they stay in the same relative spot. Leave it empty to keep a
+          simple rectangle sized by width/depth.</p>
         <label>Room name <input id="rs-name" type="text"></label>
         <div class="grid3">
           <label>Fallback width (m) <input id="rs-width" type="number" step="0.1" value="10"></label>

@@ -2,30 +2,41 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { api } from "./api.js";
-import { state, onStateChange } from "./state.js";
+import { state, onStateChange, notifyStateChange } from "./state.js";
 import { loadPref, savePref } from "./uiPrefs.js";
 
 // Room space is meters, Z-up (matches the backend's IK core). Three.js is
 // Y-up by default, so the whole scene root is rotated -90deg around X to
 // bring room-space (x, y, z-up) into Three's (x, z, y-up) without every
 // other module needing to know about the swap.
+//
+// The 3D view is deliberately fixtures/objects only: it never edits the
+// room shape or safety zones directly. Those define the space everything
+// else is placed relative to, so changing them is a bigger, more
+// consequential action (it can rescale/move every fixture and object --
+// see Room.apply_shape() on the backend) and stays in the dedicated 2D
+// Room Shape editor and the Safety Zones modal instead.
 
-let scene, camera, renderer, controls, roomRoot, staticGroup, fixturesGroup;
+let scene, camera, renderer, controls, roomRoot, staticGroup, zonesGroup, objectsGroup, fixturesGroup;
 let transformControls;
 let fixtureMeshes = new Map(); // fixture id -> {group, body, beam}
+let objectMeshes = new Map(); // room object id -> {group, kind}
 let zoneMeshes = new Map();
 let aimSurfaces = []; // meshes the click-to-aim raycaster can hit (floor/walls/ceiling)
 let gizmoAttachedFixtureId = null;
+let selectedObjectId = null; // a room object selected by clicking it in 3D (non-wall only)
 let suppressNextClick = false;
 
 // The WS broadcast triggers a state-change ~10x/second even when nothing
 // structural changed. Rebuilding the whole scene graph that often would
-// tear the fixture mesh the drag gizmo is attached to out from under an
-// in-progress drag (the same class of bug the sidebar buttons had) --
-// so static room geometry only rebuilds when its own data actually
-// changes, and fixtures are updated in place (position/color/selection)
-// rather than destroyed and recreated every tick.
+// tear the fixture/object mesh the drag gizmo is attached to out from
+// under an in-progress drag (the same class of bug the sidebar buttons
+// had) -- so static room geometry and safety zones only rebuild when
+// their own data actually changes, and fixtures/objects are updated in
+// place (position/color/selection) rather than destroyed and recreated
+// every tick.
 let lastStaticKey = "";
+let lastZonesKey = "";
 
 const CAMERA_PREF_KEY = "camera3d";
 
@@ -58,6 +69,10 @@ export function initScene3D(container) {
 
   staticGroup = new THREE.Group();
   roomRoot.add(staticGroup);
+  zonesGroup = new THREE.Group();
+  roomRoot.add(zonesGroup);
+  objectsGroup = new THREE.Group();
+  roomRoot.add(objectsGroup);
   fixturesGroup = new THREE.Group();
   roomRoot.add(fixturesGroup);
 
@@ -66,7 +81,7 @@ export function initScene3D(container) {
   dir.position.set(5, 10, 5);
   scene.add(dir);
 
-  initGizmo(container);
+  initGizmo();
 
   window.addEventListener("resize", () => {
     camera.aspect = container.clientWidth / container.clientHeight;
@@ -90,13 +105,11 @@ function saveCameraPref() {
 }
 
 // A drag-to-reposition gizmo (XYZ arrows, like a 3D-slicer/CAD tool) for
-// the single selected fixture. Attaches/detaches as the selection
-// changes (multi-select and groups don't get a gizmo -- there's no
-// single "the" position to drag), disables orbiting while dragging so
-// the two controls don't fight over the mouse, and persists the new
-// position via the room API only once the drag ends (not on every
-// intermediate frame, to avoid spamming the backend mid-drag).
-function initGizmo(container) {
+// the single selected fixture or a clicked room object (person/box/
+// surface -- walls need two points, so they're not gizmo-draggable).
+// Disables orbiting while dragging so the two controls don't fight over
+// the mouse, and persists the new position only once the drag ends.
+function initGizmo() {
   transformControls = new TransformControls(camera, renderer.domElement);
   transformControls.setMode("translate");
   transformControls.setSpace("world");
@@ -108,18 +121,18 @@ function initGizmo(container) {
   transformControls.addEventListener("dragging-changed", (event) => {
     controls.enabled = !event.value;
     if (!event.value) {
-      // drag just ended -- persist the fixture's new position, and
-      // swallow the click event the browser fires right after mouseup
-      // so releasing the gizmo doesn't also re-aim the fixture at
-      // wherever the pointer happened to land.
-      persistGizmoFixturePosition();
+      // drag just ended -- persist the new position, and swallow the
+      // click event the browser fires right after mouseup so releasing
+      // the gizmo doesn't also re-aim/re-select at wherever the pointer
+      // happened to land.
+      if (gizmoAttachedFixtureId) persistGizmoFixturePosition();
+      else if (selectedObjectId) persistGizmoObjectPosition();
       suppressNextClick = true;
     }
   });
 }
 
 function persistGizmoFixturePosition() {
-  if (!gizmoAttachedFixtureId) return;
   const entry = fixtureMeshes.get(gizmoAttachedFixtureId);
   const fixture = state.fixtureById(gizmoAttachedFixtureId);
   if (!entry || !fixture) return;
@@ -137,22 +150,57 @@ function persistGizmoFixturePosition() {
   }).catch(console.error);
 }
 
+function persistGizmoObjectPosition() {
+  const entry = objectMeshes.get(selectedObjectId);
+  const obj = (state.room.objects || []).find((o) => o.id === selectedObjectId);
+  if (!entry || !obj) return;
+  const pos = entry.group.position;
+  // box/surface meshes are rendered centered on their vertical extent
+  // (base + height/2) while the API's position is the *base*; person
+  // markers are already stored/rendered at their ground point.
+  const baseZ = obj.kind === "person" ? pos.z : pos.z - obj.height / 2;
+  api.updateRoomObject(obj.id, {
+    name: obj.name,
+    kind: obj.kind,
+    position: { x: round3(pos.x), y: round3(pos.y), z: round3(baseZ) },
+    end_position: obj.end_position || null,
+    thickness: obj.thickness,
+    width: obj.width,
+    depth: obj.depth,
+    height: obj.height,
+    color: obj.color,
+  }).catch(console.error);
+}
+
 function round3(n) {
   return Math.round(n * 1000) / 1000;
 }
 
-// Only one fixture (not a group, not multi-select) gets the drag gizmo --
-// there's no single position to drag otherwise.
+// Only one fixture (not a group, not multi-select) or one clicked object
+// gets the drag gizmo -- there's no single position to drag otherwise.
+// A sidebar fixture selection always wins over a lingering object pick.
+// `transformControls.object` (three.js's own record of what's attached)
+// is the source of truth for "what's currently attached", so this never
+// depends on tracking a parallel "previous" value by hand.
 function updateGizmoAttachment() {
   const selection = [...state.selection];
   const singleFixtureId =
     selection.length === 1 && state.fixtureById(selection[0]) ? selection[0] : null;
 
-  if (singleFixtureId === gizmoAttachedFixtureId) return;
+  if (selection.length > 0) selectedObjectId = null; // any sidebar selection wins
 
   gizmoAttachedFixtureId = singleFixtureId;
-  if (singleFixtureId && fixtureMeshes.has(singleFixtureId)) {
-    transformControls.attach(fixtureMeshes.get(singleFixtureId).group);
+
+  const wantedMesh = singleFixtureId
+    ? fixtureMeshes.get(singleFixtureId)?.group
+    : selectedObjectId
+    ? objectMeshes.get(selectedObjectId)?.group
+    : null;
+
+  if ((transformControls.object || null) === (wantedMesh || null)) return;
+
+  if (wantedMesh) {
+    transformControls.attach(wantedMesh);
     transformControls.visible = true;
     transformControls.enabled = true;
   } else {
@@ -173,36 +221,37 @@ function clearGroup(group) {
 }
 
 function rebuildScene() {
-  const staticKey = JSON.stringify({
-    floor: state.room.floor_points,
-    dims: state.room.dimensions,
-    zones: state.room.safety_zones,
-    objects: state.room.objects,
-  });
+  const staticKey = JSON.stringify({ floor: state.room.floor_points, dims: state.room.dimensions });
   if (staticKey !== lastStaticKey) {
     lastStaticKey = staticKey;
-    rebuildStaticGeometry();
+    rebuildRoomShell();
   }
+
+  const zonesKey = JSON.stringify(state.room.safety_zones);
+  if (zonesKey !== lastZonesKey) {
+    lastZonesKey = zonesKey;
+    rebuildSafetyZones();
+  }
+
   updateFixtures();
+  updateObjects();
   updateGizmoAttachment();
 }
 
-function rebuildStaticGeometry() {
+function rebuildRoomShell() {
   clearGroup(staticGroup);
-  zoneMeshes.clear();
   aimSurfaces = [];
 
   const floorPoints = effectiveFloorPoints();
   const height = state.room.dimensions?.height ?? 4;
   buildRoomShell(floorPoints, height);
-  buildRoomObjects();
-  buildSafetyZones();
 }
 
 // Mirrors the backend's Room.effective_floor_points(): use the drawn
 // polygon when there is one, otherwise fall back to a simple rectangle
 // sized from dimensions.width/depth so a room with no shape drawn yet
-// still renders something sensible.
+// still renders something sensible. The polygon itself is only ever
+// edited in the 2D Room Shape modal.
 function effectiveFloorPoints() {
   const drawn = state.room.floor_points || [];
   if (drawn.length >= 3) return drawn;
@@ -275,7 +324,10 @@ function buildQuadWall(p1, p2, zBottom, zTop, material) {
   return new THREE.Mesh(geo, material);
 }
 
-function buildSafetyZones() {
+function rebuildSafetyZones() {
+  clearGroup(zonesGroup);
+  zoneMeshes.clear();
+
   for (const zone of state.room.safety_zones || []) {
     const size = {
       x: zone.max_corner.x - zone.min_corner.x,
@@ -293,7 +345,7 @@ function buildSafetyZones() {
       color: zone.enabled ? 0xd5423a : 0x555555,
     }));
     line.position.set(center.x, center.y, center.z);
-    staticGroup.add(line);
+    zonesGroup.add(line);
     zoneMeshes.set(zone.id, line);
   }
 }
@@ -301,44 +353,88 @@ function buildSafetyZones() {
 // Visual/spatial reference objects (not safety-relevant): wall segments,
 // person-scale markers, box obstacles, and raised surfaces/platforms, so
 // operators can sanity-check aim against real obstacles and get a sense
-// of scale in the 3D view.
-function buildRoomObjects() {
-  for (const obj of state.room.objects || []) {
-    const color = new THREE.Color(obj.color || "#888888");
-    if (obj.kind === "wall" && obj.end_position) {
-      const mat = new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide });
-      const wall = buildQuadWall(obj.position, obj.end_position, obj.position.z, obj.position.z + obj.height, mat);
-      staticGroup.add(wall);
-      continue;
+// of scale in the 3D view. Non-wall objects are updated in place (like
+// fixtures) so they can be gizmo-dragged; walls (defined by two points)
+// are simpler to just rebuild since they aren't drag targets here.
+function updateObjects() {
+  const objects = state.room.objects || [];
+  const currentIds = new Set(objects.filter((o) => o.kind !== "wall").map((o) => o.id));
+
+  for (const [id, entry] of objectMeshes) {
+    if (!currentIds.has(id)) {
+      objectsGroup.remove(entry.group);
+      objectMeshes.delete(id);
+      if (selectedObjectId === id) selectedObjectId = null;
     }
-    if (obj.kind === "person") {
-      const group = new THREE.Group();
-      group.position.set(obj.position.x, obj.position.y, obj.position.z);
-      const bodyHeight = obj.height * 0.78;
-      const body = new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.18, bodyHeight - 0.36, 4, 8),
-        new THREE.MeshStandardMaterial({ color })
-      );
-      body.position.z = bodyHeight / 2 + 0.18;
-      body.rotation.x = Math.PI / 2;
-      group.add(body);
-      const head = new THREE.Mesh(
-        new THREE.SphereGeometry(0.12, 12, 12),
-        new THREE.MeshStandardMaterial({ color })
-      );
-      head.position.z = bodyHeight + 0.18 + 0.12;
-      group.add(head);
-      staticGroup.add(group);
-      continue;
-    }
-    // "box" and "surface" -- a box/platform whose base sits at obj.position
-    const box = new THREE.Mesh(
-      new THREE.BoxGeometry(obj.width, obj.depth, obj.height),
-      new THREE.MeshStandardMaterial({ color, transparent: obj.kind === "surface", opacity: 0.85 })
-    );
-    box.position.set(obj.position.x, obj.position.y, obj.position.z + obj.height / 2);
-    staticGroup.add(box);
   }
+
+  // walls are rebuilt wholesale on any object-list change (cheap, not draggable)
+  const wallsKey = JSON.stringify(objects.filter((o) => o.kind === "wall"));
+  if (wallsKey !== objectsGroup.userData.wallsKey) {
+    objectsGroup.userData.wallsKey = wallsKey;
+    for (const child of [...objectsGroup.children]) {
+      if (child.userData.isWall) objectsGroup.remove(child);
+    }
+    for (const obj of objects) {
+      if (obj.kind !== "wall" || !obj.end_position) continue;
+      const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(obj.color || "#888888"), side: THREE.DoubleSide });
+      const wall = buildQuadWall(obj.position, obj.end_position, obj.position.z, obj.position.z + obj.height, mat);
+      wall.userData.isWall = true;
+      objectsGroup.add(wall);
+    }
+  }
+
+  for (const obj of objects) {
+    if (obj.kind === "wall") continue;
+    let entry = objectMeshes.get(obj.id);
+    if (!entry) {
+      entry = createObjectMesh(obj);
+      objectMeshes.set(obj.id, entry);
+      objectsGroup.add(entry.group);
+    }
+    const isDraggingThis = selectedObjectId === obj.id && transformControls.dragging;
+    if (!isDraggingThis) {
+      const baseZ = obj.kind === "person" ? obj.position.z : obj.position.z + obj.height / 2;
+      entry.group.position.set(obj.position.x, obj.position.y, baseZ);
+    }
+  }
+}
+
+function createObjectMesh(obj) {
+  const color = new THREE.Color(obj.color || "#888888");
+  const group = new THREE.Group();
+  group.userData.objectId = obj.id;
+
+  if (obj.kind === "person") {
+    const bodyHeight = obj.height * 0.78;
+    const body = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.18, bodyHeight - 0.36, 4, 8),
+      new THREE.MeshStandardMaterial({ color })
+    );
+    body.position.z = bodyHeight / 2 + 0.18;
+    body.rotation.x = Math.PI / 2;
+    group.add(body);
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 12, 12),
+      new THREE.MeshStandardMaterial({ color })
+    );
+    head.position.z = bodyHeight + 0.18 + 0.12;
+    group.add(head);
+    group.position.set(obj.position.x, obj.position.y, obj.position.z);
+    return { group, kind: obj.kind };
+  }
+
+  // "box" / "surface" -- centered box mesh; group sits at base + height/2
+  // so it renders in the same place, but position.z reflects the mesh
+  // center (see persistGizmoObjectPosition()) when translating a drag
+  // back to the API's base-position convention.
+  const box = new THREE.Mesh(
+    new THREE.BoxGeometry(obj.width, obj.depth, obj.height),
+    new THREE.MeshStandardMaterial({ color, transparent: obj.kind === "surface", opacity: 0.85 })
+  );
+  group.add(box);
+  group.position.set(obj.position.x, obj.position.y, obj.position.z + obj.height / 2);
+  return { group, kind: obj.kind };
 }
 
 // Fixtures are updated in place -- position/color/selection-highlight/
@@ -431,6 +527,7 @@ function onSceneClick(evt, container) {
     return;
   }
   if (transformControls.dragging) return; // don't aim while dragging the gizmo
+
   const rect = container.getBoundingClientRect();
   const mouse = new THREE.Vector2(
     ((evt.clientX - rect.left) / rect.width) * 2 - 1,
@@ -438,8 +535,27 @@ function onSceneClick(evt, container) {
   );
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(mouse, camera);
+
+  // Clicking a draggable object selects it (and gives it the gizmo)
+  // instead of aiming, and takes priority over the floor/wall aim-click.
+  const objectMeshList = [...objectMeshes.values()].map((e) => e.group);
+  const objectHits = raycaster.intersectObjects(objectMeshList, true);
+  if (objectHits.length > 0) {
+    let node = objectHits[0].object;
+    while (node && !node.userData.objectId) node = node.parent;
+    if (node) {
+      selectedObjectId = node.userData.objectId;
+      state.selection.clear();
+      notifyStateChange();
+      return;
+    }
+  }
+
   const hits = raycaster.intersectObjects(aimSurfaces, false);
-  if (hits.length === 0) return;
+  if (hits.length === 0) {
+    selectedObjectId = null;
+    return;
+  }
   const point = hits[0].point.clone();
   roomRoot.worldToLocal(point);
 
