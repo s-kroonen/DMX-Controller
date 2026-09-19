@@ -229,8 +229,8 @@ depends on whether the unit stands or hangs. **Yaw** is the compass direction th
 *Invert tilt* only when a unit's channels genuinely run the other way (a head whose pan
 swings counter-clockwise from above needs *Invert pan*). Targets are reached either
 directly or with the head flipped over (pan + 180, negative tilt) when only that fits the
-ranges. The bundled generic head tilts 180 degrees (up to level either side, measured), so
-it cannot aim below the horizon: such a target is flagged out of range and the tilt stops
+ranges. The bundled generic head and the Beamz MHL108 both tilt 180 degrees (up to level either
+side, measured), so they cannot aim below the horizon: such a target is flagged out of range and the tilt stops
 at level.
 
 ## Sound-to-light

@@ -223,3 +223,19 @@ def test_the_users_side_target_needs_positive_pan_when_pan_is_inverted():
     assert r.in_range
     assert r.pan_angle_deg == pytest.approx(78.27, abs=0.05)
     assert r.tilt_angle_deg == pytest.approx(47.99, abs=0.05)
+
+
+def test_the_beamz_also_tilts_180_degrees_and_a_level_target_is_end_of_travel():
+    """Measured on the fridge-mounted Beamz: level only at DMX 255, straight up at 128.
+    (With the old 270 range a level target was sent as ~212, i.e. still ~30 degrees up.)"""
+    from app.fixtures.library import FixtureLibrary
+
+    profile = FixtureLibrary().get("beamz-mhl108-mkii-11ch")
+    assert profile.tilt_range_deg == 180.0
+    pos, orient = Vec3(-4.296, -4.046, 1.9), Orientation(yaw_deg=0, pitch_deg=180)
+    level = compute_pan_tilt(pos, orient, Vec3(0, 0, 1.9), profile.pan_range_deg,
+                             profile.tilt_range_deg, inverted_pan=True)
+    assert level.in_range and level.tilt_dmx == 255
+    up = compute_pan_tilt(pos, orient, Vec3(pos.x, pos.y, 3.9), profile.pan_range_deg,
+                          profile.tilt_range_deg, inverted_pan=True)
+    assert up.tilt_dmx in (127, 128)

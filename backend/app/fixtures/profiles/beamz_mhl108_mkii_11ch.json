@@ -20,6 +20,6 @@
   },
   "custom_channels": [],
   "pan_range_deg": 540.0,
-  "tilt_range_deg": 270.0,
+  "tilt_range_deg": 180.0,
   "defaults": { "macro": 0, "mode": 0, "strobe": 0 }
 }
