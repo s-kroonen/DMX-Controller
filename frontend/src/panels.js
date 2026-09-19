@@ -65,83 +65,96 @@ function initRgbPanel() {
   }
 }
 
-// Some fixtures multiplex dimmer and strobe/shutter onto the SAME physical
-// DMX channel (e.g. a single "Dimmer/Strobe" channel where low values dim
-// and higher values ramp strobe speed). When that's true for the current
-// selection, only one of the two sliders can actually be "in effect" at
-// once -- whichever the operator touched last -- so the other is greyed
-// out as a visual "this value is stale" cue rather than left implying it's
-// still live. When the fixture has genuinely separate channels, both
-// sliders are always fully active.
-let strobeLastTouched = null; // "dimmer" | "strobe" | null
-let lastStrobeSelectionKey = "";
+// ---- dimmer / strobe / shutter (freestyler-style) ------------------------
+//
+// Sliders show 0-100 %. Values go to the backend as 0-255 and the ENGINE maps
+// them onto each fixture's real dimmer/strobe DMX values (fixtures differ a
+// lot), so mixed fixtures behave alike. The UI only mirrors the operator
+// rules so the sliders tell the truth:
+//   * every selected fixture has ONE shared dimmer/strobe channel:
+//       touch strobe -> dimmer drops to 0;  touch dimmer -> strobe drops to 0
+//   * a mixed selection (e.g. a moving head + a Beamz): sliders are held and
+//     everything strobes together, each mapped to its own values.
 
-function sharesChannelWithStrobe() {
-  const fixtureIds = state.expandedFixtureIds();
-  for (const fid of fixtureIds) {
+const pctToLogical = (pct) => Math.round((Number(pct) * 255) / 100);
+
+function setSlider(sliderId, pctId, pct) {
+  const slider = document.getElementById(sliderId);
+  if (slider) slider.value = pct;
+  const label = document.getElementById(pctId);
+  if (label) label.textContent = `${Math.round(pct)}%`;
+}
+
+// Dimmer lives only in the Strobe/Shutter (light control) window -- not
+// duplicated in the RGB panel.
+function setDimmerUi(pct) {
+  setSlider("strobe-dimmer-slider", "strobe-dimmer-pct", pct);
+}
+
+function setStrobeUi(pct) {
+  setSlider("strobe-slider", "strobe-pct", pct);
+}
+
+function currentDimmerPct() {
+  return Number(document.getElementById("strobe-dimmer-slider").value);
+}
+
+// True when every selected fixture that has a dimmer/strobe at all shares
+// one channel for them (same rule the engine applies).
+function selectionSharesLightChannel() {
+  let relevant = 0;
+  let shared = 0;
+  for (const fid of state.expandedFixtureIds()) {
     const fixture = state.fixtureById(fid);
-    if (!fixture) continue;
-    const profile = state.profileById(fixture.profile_id);
+    const profile = fixture && state.profileById(fixture.profile_id);
     if (!profile) continue;
     const dimmerCh = profile.channels.dimmer;
     const strobeCh = profile.channels.strobe ?? profile.channels.shutter;
-    if (dimmerCh !== undefined && strobeCh !== undefined && dimmerCh === strobeCh) {
-      return true;
-    }
+    if (dimmerCh === undefined && strobeCh === undefined) continue;
+    relevant += 1;
+    if (dimmerCh !== undefined && dimmerCh === strobeCh) shared += 1;
   }
-  return false;
+  return relevant > 0 && relevant === shared;
 }
 
-function updateStrobeGreying() {
-  const selectionKey = state.expandedFixtureIds().slice().sort().join(",");
-  if (selectionKey !== lastStrobeSelectionKey) {
-    lastStrobeSelectionKey = selectionKey;
-    strobeLastTouched = null;
-  }
+function sendToSelection(call) {
+  const ids = state.expandedFixtureIds();
+  if (ids.length === 0) return;
+  call(ids).catch(console.error);
+}
 
-  const shared = sharesChannelWithStrobe();
-  const dimmerLabel = document.getElementById("strobe-dimmer-label");
-  const speedLabel = document.getElementById("strobe-speed-label");
-  const hint = document.getElementById("strobe-shared-hint");
-  hint.classList.toggle("hidden", !shared);
+function onDimmerInput(pct) {
+  setDimmerUi(pct);
+  if (selectionSharesLightChannel()) setStrobeUi(0);
+  sendToSelection((ids) => api.setDimmer(ids, pctToLogical(pct)));
+}
 
-  if (!shared) {
-    dimmerLabel.classList.remove("greyed-out");
-    speedLabel.classList.remove("greyed-out");
-    return;
+function onStrobeInput(pct) {
+  setStrobeUi(pct);
+  if (pct > 0 && selectionSharesLightChannel()) setDimmerUi(0);
+  sendToSelection((ids) => api.setStrobe(ids, pctToLogical(pct)));
+}
+
+function onShutter(closed) {
+  if (!closed) {
+    setStrobeUi(0);
+    // "Open" is never dark: a shared-channel selection that was left at 0 by strobing goes to full
+    if (selectionSharesLightChannel() && currentDimmerPct() === 0) setDimmerUi(100);
   }
-  dimmerLabel.classList.toggle("greyed-out", strobeLastTouched === "strobe");
-  speedLabel.classList.toggle("greyed-out", strobeLastTouched === "dimmer");
+  sendToSelection((ids) => api.setShutter(ids, closed));
 }
 
 function initStrobePanel() {
-  const dimmerSlider = document.getElementById("strobe-dimmer-slider");
-  const speedSlider = document.getElementById("strobe-slider");
-
-  dimmerSlider.addEventListener("input", () => {
-    strobeLastTouched = "dimmer";
-    forEachTarget((id) => api.setDimmer(id, Number(dimmerSlider.value)).catch(console.error));
-    updateStrobeGreying();
-  });
-
-  speedSlider.addEventListener("input", () => {
-    strobeLastTouched = "strobe";
-    forEachTarget((id) => api.setStrobe(id, Number(speedSlider.value)).catch(console.error));
-    updateStrobeGreying();
-  });
+  document.getElementById("strobe-dimmer-slider").addEventListener("input", (e) =>
+    onDimmerInput(Number(e.target.value)));
+  document.getElementById("strobe-slider").addEventListener("input", (e) =>
+    onStrobeInput(Number(e.target.value)));
 
   document.querySelectorAll("#panel-strobe [data-strobe]").forEach((btn) => {
-    btn.onclick = () => {
-      const value = Number(btn.dataset.strobe);
-      speedSlider.value = value;
-      strobeLastTouched = "strobe";
-      forEachTarget((id) => api.setStrobe(id, value).catch(console.error));
-      updateStrobeGreying();
-    };
+    btn.onclick = () => onStrobeInput(Number(btn.dataset.strobe));
   });
-
-  onStateChange(updateStrobeGreying);
-  updateStrobeGreying();
+  document.getElementById("shutter-closed").onclick = () => onShutter(true);
+  document.getElementById("shutter-open").onclick = () => onShutter(false);
 }
 
 function initPanTiltPanel() {

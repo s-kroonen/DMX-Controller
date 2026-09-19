@@ -46,8 +46,11 @@ export const api = {
 
   setColor: (targetId, red, green, blue, white) =>
     req("POST", "/control/color", { target_id: targetId, red, green, blue, white }),
-  setDimmer: (targetId, value) => req("POST", "/control/dimmer", { target_id: targetId, value }),
-  setStrobe: (targetId, value) => req("POST", "/control/strobe", { target_id: targetId, value }),
+  // dimmer/strobe/shutter take the WHOLE selection (array of fixture/group ids) in one call:
+  // the engine judges shared-vs-separate dimmer/strobe channels across the whole set.
+  setDimmer: (targetIds, value) => req("POST", "/control/dimmer", { target_ids: targetIds, value }),
+  setStrobe: (targetIds, value) => req("POST", "/control/strobe", { target_ids: targetIds, value }),
+  setShutter: (targetIds, closed) => req("POST", "/control/shutter", { target_ids: targetIds, closed }),
   setPanTilt: (targetId, pan, tilt, panFine = 0, tiltFine = 0) =>
     req("POST", "/control/pan-tilt", { target_id: targetId, pan, tilt, pan_fine: panFine, tilt_fine: tiltFine }),
   aim: (targetId, x, y, z, allowUnsafe = false) =>
@@ -64,9 +67,13 @@ export const api = {
 
   dmxPorts: () => req("GET", "/dmx/ports"),
   dmxStatus: () => req("GET", "/dmx/status"),
-  dmxConnect: (port, protocol, baudRate) =>
-    req("POST", "/dmx/connect", { port, protocol, baud_rate: baudRate }),
+  dmxConnect: (port, baudRate) =>
+    req("POST", "/dmx/connect", { port, baud_rate: baudRate }),
   dmxDisconnect: () => req("POST", "/dmx/disconnect"),
+  dmxReconnect: (killOtherHolders = false) =>
+    req("POST", "/dmx/reconnect", { kill_other_holders: killOtherHolders }),
+  dmxHolders: () => req("GET", "/dmx/holders"),
+  dmxKillHolders: () => req("POST", "/dmx/kill-holders"),
   dmxRaw: (channel, value) => req("POST", "/dmx/raw", { channel, value }),
   dmxRawBlackout: () => req("POST", "/dmx/raw/blackout"),
   snapshot: () => req("GET", "/snapshot"),

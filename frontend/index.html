@@ -75,14 +75,21 @@
     <div id="panel-strobe" class="floating-panel" data-panel="strobe">
       <div class="panel-header">Strobe / Shutter <span class="drag-handle">::</span><button class="panel-close">x</button></div>
       <div class="panel-body">
-        <label id="strobe-dimmer-label">Dimmer <input type="range" min="0" max="255" value="255" id="strobe-dimmer-slider"></label>
-        <label id="strobe-speed-label">Strobe Speed <input type="range" min="0" max="255" value="255" id="strobe-slider"></label>
-        <div id="strobe-shared-hint" class="hint hidden">This fixture shares one physical channel for dimmer and strobe -- whichever slider you move last is greyed on the other and becomes the value actually sent.</div>
+        <label>Dimmer <span class="pct" id="strobe-dimmer-pct">100%</span> <input type="range" min="0" max="100" value="100" id="strobe-dimmer-slider"></label>
+        <label>Strobe <span class="pct" id="strobe-pct">0%</span> <input type="range" min="0" max="100" value="0" id="strobe-slider"></label>
         <div class="btn-row">
-          <button data-strobe="255">Open</button>
-          <button data-strobe="0">Closed</button>
-          <button data-strobe="128">Strobe (mid)</button>
+          <button data-strobe="0">Off</button>
+          <button data-strobe="20">Slow</button>
+          <button data-strobe="50">Med</button>
+          <button data-strobe="100">Max</button>
         </div>
+        <div class="btn-row">
+          <button id="shutter-closed">Closed</button>
+          <button id="shutter-open">Open</button>
+        </div>
+        <div class="hint">Values are percentages; each fixture maps them to its own DMX values. If every selected
+          fixture has one shared dimmer/strobe channel, strobing drops the dimmer to 0 (and moving the dimmer stops
+          the strobe). In a mixed selection the dimmer is kept and everything strobes together.</div>
       </div>
     </div>
 
@@ -191,20 +198,18 @@
             <input id="ds-port-manual" type="text" placeholder="COM3">
           </label>
           <button id="ds-refresh-ports" type="button">Refresh port list</button>
-          <label>Protocol
-            <select id="ds-protocol">
-              <option value="passthrough">passthrough (raw 512 bytes, try this first)</option>
-              <option value="framed">framed (header + count + data + footer)</option>
-            </select>
-          </label>
-          <label>Baud rate <input id="ds-baud" type="number" value="250000"></label>
+          <label>Baud rate <input id="ds-baud" type="number" value="38400"></label>
           <div class="btn-row">
             <button id="ds-connect" class="primary-btn" type="button">Connect</button>
             <button id="ds-disconnect" type="button">Disconnect (use simulator)</button>
           </div>
-          <p class="hint">See docs/DMX4ALL_PROTOCOL.md -- the real byte protocol is unverified until you
-            confirm a fixture actually moves. A failed connect here falls back to the simulator; it never
-            crashes the backend, so it's safe to try different ports/protocols one after another.</p>
+          <div class="btn-row">
+            <button id="ds-reconnect" class="primary-btn" type="button">Reconnect</button>
+            <button id="ds-kill-holders" type="button">Kill other USB/DMX processes</button>
+          </div>
+          <div id="ds-holders" class="hint"></div>
+          <p class="hint">Connecting sends the DMX4ALL "C?" handshake and expects "G" back, so a wrong port is reported
+            here instead of silently doing nothing. A failed connect falls back to the simulator; it never crashes the backend.</p>
         </fieldset>
 
         <fieldset>

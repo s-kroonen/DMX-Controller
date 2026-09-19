@@ -1,10 +1,9 @@
 import { api } from "./api.js";
 
-// The DMX4ALL wire protocol is unverified (see docs/DMX4ALL_PROTOCOL.md),
-// so hardware testing means trying a port/protocol/baud combination,
-// checking the raw-channel test, and iterating -- this panel lets that
-// happen entirely from the browser instead of editing env vars and
-// restarting the backend between every attempt. A failed connect here is
+// Hardware testing happens from this panel: pick the port, connect (the
+// driver does the DMX4ALL "C?"/"G" handshake), then use the raw-channel
+// test -- all from the browser instead of editing env vars and
+// restarting the backend between attempts. A failed connect here is
 // designed to never crash the backend (see app/context.py); it just
 // reports the error and leaves whatever was running before untouched.
 
@@ -14,6 +13,8 @@ export function initDmxSetupModal() {
   document.getElementById("ds-refresh-ports").onclick = refreshPorts;
   document.getElementById("ds-connect").onclick = connect;
   document.getElementById("ds-disconnect").onclick = disconnect;
+  document.getElementById("ds-reconnect").onclick = () => reconnectDmx(false);
+  document.getElementById("ds-kill-holders").onclick = killHolders;
   document.getElementById("ds-raw-send").onclick = sendRaw;
   document.getElementById("ds-raw-blackout").onclick = () =>
     api.dmxRawBlackout().catch((e) => alert(e.message));
@@ -21,7 +22,7 @@ export function initDmxSetupModal() {
 
 async function openModal() {
   document.getElementById("modal-dmx-setup").classList.remove("hidden");
-  await Promise.all([refreshPorts(), refreshStatus()]);
+  await Promise.all([refreshPorts(), refreshStatus(), refreshHolders()]);
 }
 
 function closeModal() {
@@ -55,14 +56,15 @@ async function refreshStatus() {
   try {
     const status = await api.dmxStatus();
     const lines = [
-      `Mode: ${status.mode}${status.mode === "dmx4all" ? ` (${status.port}, ${status.protocol}, ${status.baud_rate} baud)` : ""}`,
+      `Mode: ${status.mode}${status.mode === "dmx4all" ? ` (${status.port}, ${status.baud_rate} baud)` : ""}`,
       `Running: ${status.running}`,
       `Frames sent: ${status.frames_sent}`,
     ];
+    if (status.link_lost) lines.push("LINK LOST -- press Reconnect");
     if (status.last_frame_error) lines.push(`Last frame error: ${status.last_frame_error}`);
     if (status.connect_error) lines.push(`Last connect error: ${status.connect_error}`);
     box.textContent = lines.join(" | ");
-    box.style.color = (status.last_frame_error || status.connect_error) ? "#ff8080" : "";
+    box.style.color = (status.link_lost || status.last_frame_error || status.connect_error) ? "#ff8080" : "";
   } catch (e) {
     box.textContent = `Failed to fetch DMX status: ${e.message}`;
   }
@@ -80,10 +82,9 @@ async function connect() {
     alert("Pick a detected port or type one manually.");
     return;
   }
-  const protocol = document.getElementById("ds-protocol").value;
   const baud = Number(document.getElementById("ds-baud").value);
   try {
-    await api.dmxConnect(port, protocol, baud);
+    await api.dmxConnect(port, baud);
     await refreshStatus();
   } catch (e) {
     alert(`Connect failed (backend is still running fine): ${e.message}`);
@@ -104,4 +105,42 @@ async function sendRaw() {
   } catch (e) {
     alert(e.message);
   }
+}
+
+async function refreshHolders() {
+  const box = document.getElementById("ds-holders");
+  try {
+    const holders = await api.dmxHolders();
+    box.textContent = holders.length
+      ? `Would be killed: ${holders.map((h) => `${h.name} (pid ${h.pid})`).join(", ")}`
+      : "No other DMX/USB processes found (FreeStyler, DMX-Configurator, other copies of this backend).";
+  } catch (e) {
+    box.textContent = `Failed to list processes: ${e.message}`;
+  }
+}
+
+// Exported so the top-bar status pill can trigger a reconnect in one click.
+export async function reconnectDmx(killOtherHolders = false) {
+  try {
+    const status = await api.dmxReconnect(killOtherHolders);
+    if (status.killed && status.killed.length) {
+      alert(`Killed: ${status.killed.map((k) => `${k.name} (pid ${k.pid})`).join(", ")}`);
+    }
+  } catch (e) {
+    alert(`Reconnect failed (backend is still running on the simulator): ${e.message}`);
+  }
+  await Promise.all([refreshStatus(), refreshHolders()]);
+}
+
+async function killHolders() {
+  const holders = await api.dmxHolders().catch(() => []);
+  const names = holders.map((h) => `${h.name} (pid ${h.pid})`).join("\n") || "(none found)";
+  if (!confirm(`Kill these processes and release the DMX port?\n\n${names}`)) return;
+  try {
+    await api.dmxKillHolders();
+  } catch (e) {
+    alert(e.message);
+  }
+  await Promise.all([refreshStatus(), refreshHolders()]);
+  alert("Done. Press Reconnect to re-open the dongle.");
 }

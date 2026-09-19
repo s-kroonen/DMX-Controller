@@ -47,6 +47,24 @@ class CustomChannel:
 
 
 @dataclasses.dataclass
+class RoleRange:
+    """Where a role's usable values live inside its physical DMX channel.
+
+    Needed when several roles share one channel (e.g. a single dimmer/strobe
+    channel: 10-134 dims, 135-239 strobes, 240-255 is full on). The UI and
+    animations always work in a logical 0-255; raw_value() maps that into the
+    range so a "full" dimmer slider never spills into strobe territory.
+
+      logical 0        -> zero  (the "off"/"none" value for this role)
+      logical 1..255   -> linearly min..max
+    """
+
+    min: int
+    max: int
+    zero: int = 0
+
+
+@dataclasses.dataclass
 class FixtureProfile:
     id: str  # stable slug, e.g. "beamz-mhl108-mkii-11ch"
     name: str
@@ -60,6 +78,8 @@ class FixtureProfile:
     tilt_range_deg: Optional[float] = 270.0
     defaults: dict[str, int] = dataclasses.field(default_factory=dict)
     fixture_type: str = "generic"  # "moving_head" | "par" | "laser" | "generic"
+    # role -> RoleRange; roles not listed pass straight through 1:1
+    role_ranges: dict[str, RoleRange] = dataclasses.field(default_factory=dict)
 
     def has_function(self, name: str) -> bool:
         return name in self.channels
@@ -76,6 +96,16 @@ class FixtureProfile:
     def has_strobe(self) -> bool:
         return self.has_function("strobe") or self.has_function("shutter")
 
+    def raw_value(self, role: str, value: int) -> int:
+        """Logical 0-255 slider value -> the raw DMX value for this role."""
+        value = max(0, min(255, int(value)))
+        rng = self.role_ranges.get(role)
+        if rng is None:
+            return value
+        if value == 0:
+            return rng.zero
+        return round(rng.min + (value - 1) / 254 * (rng.max - rng.min))
+
     def to_dict(self) -> dict:
         d = dataclasses.asdict(self)
         return d
@@ -83,5 +113,6 @@ class FixtureProfile:
     @staticmethod
     def from_dict(d: dict) -> "FixtureProfile":
         custom = [CustomChannel(**c) for c in d.get("custom_channels", [])]
-        kwargs = {**d, "custom_channels": custom}
+        ranges = {role: RoleRange(**r) for role, r in (d.get("role_ranges") or {}).items()}
+        kwargs = {**d, "custom_channels": custom, "role_ranges": ranges}
         return FixtureProfile(**kwargs)

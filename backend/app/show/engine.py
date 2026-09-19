@@ -13,7 +13,7 @@ current values, not just be write-only).
 from __future__ import annotations
 
 import dataclasses
-from typing import Optional
+from typing import Iterable, Optional, Union
 
 from ..dmx.interface import DmxOutput
 from ..fixtures.library import FixtureLibrary
@@ -28,9 +28,11 @@ class FixtureState:
     values: dict[str, int] = dataclasses.field(default_factory=dict)  # role/custom-label -> 0-255
     last_target: Optional[Vec3] = None
     blocked_by_safety_zone: Optional[str] = None  # zone id, if last aim was blocked
+    shutter_closed: bool = False  # "Closed" button: dark regardless of dimmer/strobe
 
     def to_dict(self) -> dict:
         return {
+            "shutter_closed": self.shutter_closed,
             "values": dict(self.values),
             "last_target": dataclasses.asdict(self.last_target) if self.last_target else None,
             "blocked_by_safety_zone": self.blocked_by_safety_zone,
@@ -66,25 +68,44 @@ class ShowEngine:
     def state_for(self, fixture_id: str) -> FixtureState:
         return self.fixture_state.setdefault(fixture_id, FixtureState())
 
-    def resolve_fixture_ids(self, target_id: str) -> list[str]:
-        """target_id may be a fixture id or a group id."""
-        if target_id in self.room.fixtures:
-            return [target_id]
-        if target_id in self.groups:
-            return list(self.groups[target_id].fixture_ids)
-        raise KeyError(f"no fixture or group with id {target_id!r}")
+    def resolve_fixture_ids(self, target: Union[str, Iterable[str]]) -> list[str]:
+        """target may be a fixture id, a group id, or a list of either (the
+        union, de-duplicated, in order). Passing the whole selection in one
+        call matters for dimmer/strobe: whether the fixtures share one
+        dimmer/strobe channel is judged across the whole set."""
+        if not isinstance(target, str):
+            resolved: list[str] = []
+            for one in target:
+                for fid in self.resolve_fixture_ids(one):
+                    if fid not in resolved:
+                        resolved.append(fid)
+            return resolved
+        if target in self.room.fixtures:
+            return [target]
+        if target in self.groups:
+            return list(self.groups[target].fixture_ids)
+        raise KeyError(f"no fixture or group with id {target!r}")
 
     # -- low-level channel access --------------------------------------
 
     def set_role_value(self, fixture_id: str, role: str, value: int) -> None:
         """Set a well-known function channel (pan, red, strobe, ...)."""
+        if role == "dimmer":
+            self._set_light(fixture_id, dimmer=value)
+            return
+        if role == "strobe":
+            self._set_light(fixture_id, strobe=value)
+            return
         profile = self.profile_for(fixture_id)
         instance = self.room.fixtures[fixture_id]
         offset = profile.channel_for(role)
         if offset is None:
             return  # fixture doesn't have this function; silently no-op like most consoles
         dmx_channel = instance.channel_for(offset)
-        self.dmx.set_channel(dmx_channel, value)
+        # `value` is the logical 0-255 the UI/animations use; the profile may
+        # squeeze it into a sub-range of the physical channel (shared
+        # dimmer/strobe channels).
+        self.dmx.set_channel(dmx_channel, profile.raw_value(role, value))
         self.state_for(fixture_id).values[role] = value
 
     def set_custom_channel(self, fixture_id: str, channel_offset: int, value: int) -> None:
@@ -105,15 +126,111 @@ class ShowEngine:
             if white is not None:
                 self.set_role_value(fid, "white", white)
 
-    def set_dimmer(self, target_id: str, value: int) -> None:
-        for fid in self.resolve_fixture_ids(target_id):
-            self.set_role_value(fid, "dimmer", value)
+    # -- dimmer / strobe / shutter (freestyler-style) ---------------------
+    #
+    # The UI speaks a logical 0-100 % (sent as 0-255) for both dimmer and
+    # strobe; the profile's role_ranges map that onto each fixture's real DMX
+    # values, so different fixtures behave the same when mixed.
+    #
+    # Fixtures come in two shapes:
+    #   separate  dimmer and strobe on their own channels (e.g. the Beamz)
+    #   shared    ONE channel carries both (e.g. the 14ch head: dimmer band,
+    #             strobe band). Only one can be in effect; strobe wins while
+    #             it is above 0, otherwise the dimmer level is sent.
+    #
+    # Operator rules for shared fixtures (as in freestyler):
+    #   * strobe touched  -> dimmer goes to 0   (the channel now carries strobe)
+    #   * dimmer touched  -> strobe goes to 0   (the channel now carries dimmer)
+    # ...but only when EVERY fixture in the target set is shared. In a mixed
+    # selection (say a head + a Beamz) nothing is zeroed: the held dimmer value
+    # stays for the fixtures that can honour it, and everything strobes
+    # together, each mapped to its own values.
 
-    def set_strobe(self, target_id: str, value: int) -> None:
-        """Separate strobe/shutter control, independent of RGB/dimmer."""
-        for fid in self.resolve_fixture_ids(target_id):
-            self.set_role_value(fid, "strobe", value)
-            self.set_role_value(fid, "shutter", value)
+    def _light_channels(self, fixture_id: str) -> tuple[Optional[int], Optional[int]]:
+        profile = self.profile_for(fixture_id)
+        dimmer = profile.channel_for("dimmer")
+        strobe = profile.channel_for("strobe") or profile.channel_for("shutter")
+        return dimmer, strobe
+
+    def _is_shared_light_channel(self, fixture_id: str) -> bool:
+        dimmer, strobe = self._light_channels(fixture_id)
+        return dimmer is not None and dimmer == strobe
+
+    def _all_shared(self, fixture_ids: list[str]) -> bool:
+        """True if every fixture that has a dimmer or strobe shares one channel
+        for them (and there is at least one)."""
+        relevant = [f for f in fixture_ids if any(c is not None for c in self._light_channels(f))]
+        return bool(relevant) and all(self._is_shared_light_channel(f) for f in relevant)
+
+    def _set_light(self, fixture_id: str, *, dimmer: Optional[int] = None,
+                   strobe: Optional[int] = None, closed: Optional[bool] = None) -> None:
+        dimmer_ch, strobe_ch = self._light_channels(fixture_id)
+        state = self.state_for(fixture_id)
+        if dimmer is not None and dimmer_ch is not None:
+            state.values["dimmer"] = max(0, min(255, int(dimmer)))
+        if strobe is not None and strobe_ch is not None:
+            state.values["strobe"] = max(0, min(255, int(strobe)))
+        if closed is not None:
+            state.shutter_closed = closed
+        self._write_light(fixture_id)
+
+    def _write_light(self, fixture_id: str) -> None:
+        """Compute and send the dimmer/strobe channel(s) from the light state."""
+        profile = self.profile_for(fixture_id)
+        instance = self.room.fixtures[fixture_id]
+        dimmer_ch, strobe_ch = self._light_channels(fixture_id)
+        state = self.state_for(fixture_id)
+        dimmer = state.values.get("dimmer")
+        strobe = state.values.get("strobe")
+
+        def send(offset: int, raw: int) -> None:
+            self.dmx.set_channel(instance.channel_for(offset), raw)
+
+        if dimmer_ch is not None and dimmer_ch == strobe_ch:  # shared channel
+            if state.shutter_closed:
+                send(dimmer_ch, profile.raw_value("dimmer", 0))
+            elif strobe:  # strobe wins the channel while active
+                send(dimmer_ch, profile.raw_value("strobe", strobe))
+            elif dimmer is not None:
+                send(dimmer_ch, profile.raw_value("dimmer", dimmer))
+            elif strobe is not None:
+                send(dimmer_ch, profile.raw_value("strobe", 0))
+            return
+
+        if dimmer_ch is not None and (state.shutter_closed or dimmer is not None):
+            send(dimmer_ch, profile.raw_value("dimmer", 0 if state.shutter_closed else dimmer))
+        if strobe_ch is not None and (state.shutter_closed or strobe is not None):
+            send(strobe_ch, profile.raw_value("strobe", 0 if state.shutter_closed else strobe))
+
+    def set_dimmer(self, target: Union[str, Iterable[str]], value: int) -> None:
+        fixture_ids = self.resolve_fixture_ids(target)
+        all_shared = self._all_shared(fixture_ids)
+        for fid in fixture_ids:
+            shared = self._is_shared_light_channel(fid)
+            self._set_light(fid, dimmer=value, closed=False,
+                            strobe=0 if (shared and all_shared) else None)
+
+    def set_strobe(self, target: Union[str, Iterable[str]], value: int) -> None:
+        """Strobe speed, logical 0 (none) .. 255 (fastest)."""
+        fixture_ids = self.resolve_fixture_ids(target)
+        all_shared = self._all_shared(fixture_ids)
+        for fid in fixture_ids:
+            shared = self._is_shared_light_channel(fid)
+            self._set_light(fid, strobe=value, closed=False,
+                            dimmer=0 if (shared and all_shared and value > 0) else None)
+
+    def set_shutter(self, target: Union[str, Iterable[str]], closed: bool) -> None:
+        """Closed: dark, dimmer/strobe values are remembered. Open: light on,
+        no strobe; a shared-channel fixture whose dimmer is at 0 (e.g. after
+        strobing) is brought to full so Open is never dark."""
+        for fid in self.resolve_fixture_ids(target):
+            if closed:
+                self._set_light(fid, closed=True)
+                continue
+            dimmer = None
+            if self._is_shared_light_channel(fid) and not self.state_for(fid).values.get("dimmer"):
+                dimmer = 255
+            self._set_light(fid, closed=False, strobe=0, dimmer=dimmer)
 
     def set_raw_pan_tilt(self, target_id: str, pan: int, tilt: int,
                          pan_fine: int = 0, tilt_fine: int = 0) -> None:
