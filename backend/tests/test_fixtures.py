@@ -9,6 +9,16 @@ def test_bundled_profiles_load():
     assert "generic-par-rgb-4ch" in ids
     assert "beamz-mhl108-mkii-11ch" in ids
     assert "generic-laser-8ch" in ids
+    assert "generic-smoke-machine-2ch" in ids
+
+
+def test_smoke_machine_has_no_pan_tilt_or_color():
+    lib = FixtureLibrary()
+    profile = lib.get("generic-smoke-machine-2ch")
+    assert profile is not None
+    assert profile.fixture_type == "smoke"
+    assert not profile.has_pan_tilt()
+    assert not profile.has_color()
 
 
 def test_moving_head_has_pan_tilt_and_color():

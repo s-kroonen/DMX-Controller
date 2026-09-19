@@ -1,0 +1,17 @@
+{
+  "id": "generic-smoke-machine-2ch",
+  "name": "Generic Smoke Machine (2ch)",
+  "manufacturer": "Generic",
+  "mode": "2ch",
+  "channel_count": 2,
+  "fixture_type": "smoke",
+  "channels": {
+    "dimmer": 1
+  },
+  "custom_channels": [
+    { "channel": 2, "label": "Fan Speed", "default": 0, "min_value": 0, "max_value": 255 }
+  ],
+  "pan_range_deg": null,
+  "tilt_range_deg": null,
+  "defaults": { "dimmer": 0 }
+}

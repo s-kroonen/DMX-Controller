@@ -101,7 +101,8 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
 - **Fixture profile system** (`app/fixtures/`): JSON fixture-type
   definitions (channel map, pan/tilt range, custom/unmapped channels),
   bundled profiles for a generic 16ch moving head, the Beamz MHL108 MKII,
-  a 4ch RGB PAR, and a generic laser, plus a QLC+ `.qxf` importer so you
+  a 4ch RGB PAR, a generic laser, and a 2ch smoke machine, plus a QLC+
+  `.qxf` importer so you
   can pull in fixtures from their community library instead of hand-typing
   every channel map. The in-app **Fixture Creator** lets you define new
   fixture types (including custom sliders that don't map to any built-in
@@ -161,13 +162,20 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   a safety zone editor; and a keyframe animation editor. Three.js is
   vendored locally (`frontend/vendor/three/`) so the controller runs with
   no internet access at the venue.
-  - The 3D view is fixtures/objects only -- click a fixture (via the
-    sidebar) or a room object (person/box/surface -- walls need two
-    points, so they're not draggable this way) to attach a drag gizmo
-    (XYZ arrows, like a 3D-slicer/CAD tool) and reposition it; the new
-    position saves once you release. Multi-select and group selections
-    don't get a gizmo (there's no single position to drag). Room shape
-    and safety zones are never edited here -- see above for why.
+  - The 3D view is fixtures/objects only -- click a fixture directly in
+    the scene (or via the sidebar) or a room object (person/box/surface --
+    walls need two points, so they're not draggable this way) to attach a
+    drag gizmo (XYZ arrows, like a 3D-slicer/CAD tool) and reposition it;
+    the new position saves once you release. Multi-select and group
+    selections don't get a gizmo (there's no single position to drag).
+    Room shape and safety zones are never edited here -- see above for why.
+  - Fixtures render with a model shaped for their `fixture_type` --
+    moving head (base/yoke/head), smoke machine (box + nozzle), PAR can
+    (cylinder), or a plain box for anything else -- with a bright green
+    arrow on every fixture showing exactly which way it's calibrated to
+    call pan/tilt zero (its mounting `orientation.yaw_deg`), so a
+    miscalibrated "front" is obvious at a glance instead of hidden inside
+    a featureless ball.
   - Each floating control window remembers whether it's open/closed and
     where you left it (localStorage, per browser) across a page refresh.
     A closed window is never stranded -- the **Windows** menu in the top

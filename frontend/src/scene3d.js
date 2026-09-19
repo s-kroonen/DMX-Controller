@@ -460,6 +460,13 @@ function updateFixtures() {
 
   for (const fixture of state.room.fixtures) {
     let entry = fixtureMeshes.get(fixture.id);
+    // Rebuild the body if the fixture was re-patched onto a different
+    // profile (fixture_type may have changed) -- rare, but cheap to check.
+    if (entry && entry.profileId !== fixture.profile_id) {
+      fixturesGroup.remove(entry.group);
+      fixtureMeshes.delete(fixture.id);
+      entry = null;
+    }
     if (!entry) {
       entry = createFixtureMesh(fixture);
       fixtureMeshes.set(fixture.id, entry);
@@ -471,7 +478,15 @@ function updateFixtures() {
       entry.group.position.set(fixture.position.x, fixture.position.y, fixture.position.z);
     }
 
-    entry.body.material.color.set(state.isSelected(fixture.id) ? 0xffffff : 0x3a7bd5);
+    // The body model is authored facing +Y at zero rotation; rotate it (and
+    // the front-direction arrow) to the fixture's mounted "front" so you can
+    // see at a glance which way it's calibrated to call pan/tilt zero.
+    const yawRad = THREE.MathUtils.degToRad(fixture.orientation?.yaw_deg || 0);
+    entry.bodyGroup.rotation.z = -yawRad;
+    const frontDir = entry.arrow.userData.frontDir.set(Math.sin(yawRad), Math.cos(yawRad), 0);
+    entry.arrow.setDirection(frontDir);
+
+    entry.bodyMaterial.color.set(state.isSelected(fixture.id) ? 0xffffff : entry.bodyMaterial.userData.baseColor);
 
     const fixtureState = state.fixtureState[fixture.id];
     const color = fixtureState && fixtureState.values
@@ -499,15 +514,86 @@ function updateFixtures() {
   }
 }
 
+// Body shapes are authored so their "front" faces local +Y at zero
+// rotation -- updateFixtures() then rotates the whole bodyGroup by the
+// fixture's mounted orientation.yaw_deg so the model actually shows which
+// way it's calibrated to call pan/tilt zero, not just a featureless ball.
+// A bright green arrow is added on top regardless of body shape, since a
+// small shape asymmetry can be hard to read at a glance across a room.
+function buildFixtureBody(fixtureType, material) {
+  const bodyGroup = new THREE.Group();
+  const lensMat = new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0x554400 });
+
+  if (fixtureType === "moving_head") {
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.12), material);
+    base.position.z = -0.06;
+    bodyGroup.add(base);
+    const armGeo = new THREE.BoxGeometry(0.04, 0.16, 0.04);
+    const armL = new THREE.Mesh(armGeo, material); armL.position.set(-0.09, 0.03, 0.05); bodyGroup.add(armL);
+    const armR = new THREE.Mesh(armGeo, material); armR.position.set(0.09, 0.03, 0.05); bodyGroup.add(armR);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 16), material);
+    head.position.set(0, 0.04, 0.09);
+    bodyGroup.add(head);
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.045, 16), lensMat);
+    lens.position.set(0, 0.04 + 0.099, 0.09);
+    lens.rotation.x = -Math.PI / 2; // face +Y (front)
+    bodyGroup.add(lens);
+    return bodyGroup;
+  }
+
+  if (fixtureType === "smoke" || fixtureType === "fog") {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.2, 0.18), material);
+    bodyGroup.add(box);
+    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.08, 12), material);
+    nozzle.position.set(0, 0.14, 0);
+    bodyGroup.add(nozzle);
+    return bodyGroup;
+  }
+
+  if (fixtureType === "par") {
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.26, 16), material);
+    bodyGroup.add(can); // cylinder's own axis is +Y by default -- already front/back
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.1, 16), lensMat);
+    lens.position.set(0, 0.13, 0);
+    lens.rotation.x = -Math.PI / 2;
+    bodyGroup.add(lens);
+    return bodyGroup;
+  }
+
+  // "other" / generic / laser -- a plain box with a front marker disc so
+  // even the fallback shape is never ambiguous about which way it faces.
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.22), material);
+  bodyGroup.add(box);
+  const marker = new THREE.Mesh(new THREE.CircleGeometry(0.07, 16), lensMat);
+  marker.position.set(0, 0.111, 0);
+  marker.rotation.x = -Math.PI / 2;
+  bodyGroup.add(marker);
+  return bodyGroup;
+}
+
 function createFixtureMesh(fixture) {
+  const profile = state.profileById(fixture.profile_id);
+  const fixtureType = profile?.fixture_type || "generic";
+
   const group = new THREE.Group();
   group.position.set(fixture.position.x, fixture.position.y, fixture.position.z);
+  group.userData.fixtureId = fixture.id;
 
-  const body = new THREE.Mesh(
-    new THREE.SphereGeometry(0.12, 12, 12),
-    new THREE.MeshStandardMaterial({ color: 0x3a7bd5 })
+  const baseColor = 0x3a7bd5;
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: baseColor });
+  bodyMaterial.userData.baseColor = baseColor;
+
+  const bodyGroup = buildFixtureBody(fixtureType, bodyMaterial);
+  group.add(bodyGroup);
+
+  // Unmistakable front-direction indicator, independent of body shape,
+  // so "where is the front" always has one clear answer regardless of
+  // how subtle a given model's asymmetry is.
+  const arrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), 0.3, 0x33ff66, 0.09, 0.05
   );
-  group.add(body);
+  arrow.userData.frontDir = new THREE.Vector3(0, 1, 0);
+  group.add(arrow);
 
   const beamGeo = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0),
@@ -518,7 +604,7 @@ function createFixtureMesh(fixture) {
   }));
   group.add(beam);
 
-  return { group, body, beam };
+  return { group, bodyGroup, bodyMaterial, arrow, beam, profileId: fixture.profile_id };
 }
 
 function onSceneClick(evt, container) {
@@ -535,6 +621,23 @@ function onSceneClick(evt, container) {
   );
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(mouse, camera);
+
+  // Clicking a fixture selects it directly in the 3D view (same as
+  // clicking its sidebar button) instead of aiming, and takes priority
+  // over everything else so you can always grab exactly what you clicked.
+  const fixtureMeshList = [...fixtureMeshes.values()].map((e) => e.group);
+  const fixtureHits = raycaster.intersectObjects(fixtureMeshList, true);
+  if (fixtureHits.length > 0) {
+    let node = fixtureHits[0].object;
+    while (node && !node.userData.fixtureId) node = node.parent;
+    if (node) {
+      selectedObjectId = null;
+      state.selection.clear();
+      state.selection.add(node.userData.fixtureId);
+      notifyStateChange();
+      return;
+    }
+  }
 
   // Clicking a draggable object selects it (and gives it the gizmo)
   // instead of aiming, and takes priority over the floor/wall aim-click.
