@@ -49,7 +49,7 @@
     }
   ],
   "pan_range_deg": 540.0,
-  "tilt_range_deg": 270.0,
+  "tilt_range_deg": 180.0,
   "defaults": {
     "dimmer": 255
   },

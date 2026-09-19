@@ -596,14 +596,16 @@ function updateFixtures() {
     // `group` for yaw and `pitchGroup` for pitch lets the two gizmo modes
     // manipulate each rotation directly and read it straight back out as
     // yaw_deg/pitch_deg on drag-end. pitch_deg's ik.py convention is
-    // 0=straight down, 90=horizontal -- offset by -90 so pitch=90 (the
-    // old, pitch-less visual default) leaves pitchGroup unrotated.
+    // 0=straight down, 90=horizontal, 180=straight up -- it places the fixture's
+    // HOME (beam direction at tilt centre, along the pan axis). The arrow
+    // shows it: a fixture standing on the floor (pitch 180) points up.
+    // Offset by -90 so pitch=90 leaves pitchGroup unrotated.
     if (!draggingYaw) {
       const yawRad = THREE.MathUtils.degToRad(fixture.orientation?.yaw_deg || 0);
       entry.group.rotation.z = -yawRad;
     }
     if (!draggingPitch) {
-      const pitchRad = THREE.MathUtils.degToRad(fixture.orientation?.pitch_deg ?? 90);
+      const pitchRad = THREE.MathUtils.degToRad(fixture.orientation?.pitch_deg ?? 180);
       entry.pitchGroup.rotation.x = pitchRad - Math.PI / 2;
     }
     // Roll rotates around the fixture's own front/aim axis (local Y) --

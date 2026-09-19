@@ -212,6 +212,27 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
     bar lists every one with its current state and reopens it on click.
     The 3D camera's position/orbit target persist the same way.
 
+## Mounting and aiming (pan/tilt)
+
+A moving head's **home** is the direction its beam takes at tilt centre: along the pan axis,
+away from the base. That is what a fixture's **Mounting** sets (Patch form and the Details
+panel; stored as `pitch_deg`, 0 = home down, 90 = horizontal, 180 = home up):
+
+- **Standing** on the floor or a stage box: home is *up* (the default -- almost every head
+  is set up this way).
+- **Hanging** from a truss: home is *down*.
+- **On a wall**: horizontal.
+
+Tilt is the angle *away from home* (tilt+ leans toward the pan direction), so it never
+depends on whether the unit stands or hangs. **Yaw** is the compass direction the front
+(display side) faces, i.e. where the beam leans at pan centre. Use *Invert pan* /
+*Invert tilt* only when a unit's channels genuinely run the other way (a head whose pan
+swings counter-clockwise from above needs *Invert pan*). Targets are reached either
+directly or with the head flipped over (pan + 180, negative tilt) when only that fits the
+ranges. The bundled generic head tilts 180 degrees (up to level either side, measured), so
+it cannot aim below the horizon: such a target is flagged out of range and the tilt stops
+at level.
+
 ## Sound-to-light
 
 Open the **Sound** window (top bar). It works like Freestyler's audio section:

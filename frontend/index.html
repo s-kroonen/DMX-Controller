@@ -69,6 +69,7 @@
                 <fieldset>
                   <legend>Mounting orientation (degrees)</legend>
                   <label>Yaw <input id="fd-yaw" type="number" step="1"></label>
+                  <label>Mounting <select id="fd-mount"></select></label>
                   <label>Pitch <input id="fd-pitch" type="number" step="1"></label>
                   <label>Roll <input id="fd-roll" type="number" step="1"></label>
                 </fieldset>
@@ -241,12 +242,13 @@
           <legend>Position (meters)</legend>
           <label>X <input id="patch-x" type="number" value="0" step="0.1"></label>
           <label>Y <input id="patch-y" type="number" value="0" step="0.1"></label>
-          <label>Z <input id="patch-z" type="number" value="3" step="0.1"></label>
+          <label>Z <input id="patch-z" type="number" value="0" step="0.1"></label>
         </fieldset>
         <fieldset>
           <legend>Mounting orientation (degrees)</legend>
           <label>Yaw <input id="patch-yaw" type="number" value="0" step="1"></label>
-          <label>Pitch <input id="patch-pitch" type="number" value="90" step="1"></label>
+          <label>Mounting <select id="patch-mount"></select></label>
+          <label>Pitch <input id="patch-pitch" type="number" value="180" step="1"></label>
         </fieldset>
         <label><input id="patch-invert-pan" type="checkbox"> Invert pan</label>
         <label><input id="patch-invert-tilt" type="checkbox"> Invert tilt</label>

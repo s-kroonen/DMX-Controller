@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { state, notifyStateChange } from "./state.js";
 import { reloadRoomAndGroups } from "./main_data.js";
 import { loadPref, savePref } from "./uiPrefs.js";
+import { wireMountSelect } from "./mounting.js";
 
 // Inline, non-modal fixture detail editor living under the fixture list in
 // the sidebar (unlike every other editor, which is a popup) -- loads the
@@ -19,8 +20,10 @@ let lastGroupsKey = "";
 // focus leaves the field (blur, not just "still focused", was the actual
 // window the old focus-only check missed).
 let formDirty = false;
+let syncDetailsMount = () => {};
 
 export function initFixtureDetailsPanel() {
+  syncDetailsMount = wireMountSelect("fd-mount", "fd-pitch");
   const header = document.getElementById("fixture-details-toggle");
   header.onclick = () => setCollapsed(!isCollapsed());
 
@@ -124,6 +127,7 @@ function fillForm(fixture) {
   document.getElementById("fd-z").value = fixture.position.z;
   document.getElementById("fd-yaw").value = fixture.orientation.yaw_deg;
   document.getElementById("fd-pitch").value = fixture.orientation.pitch_deg;
+  syncDetailsMount();
   document.getElementById("fd-roll").value = fixture.orientation.roll_deg || 0;
   document.getElementById("fd-invert-pan").checked = fixture.inverted_pan;
   document.getElementById("fd-invert-tilt").checked = fixture.inverted_tilt;

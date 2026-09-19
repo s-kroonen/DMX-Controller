@@ -1,8 +1,10 @@
 import { api } from "./api.js";
 import { state, notifyStateChange } from "./state.js";
 import { reloadRoomAndGroups } from "./main_data.js";
+import { wireMountSelect } from "./mounting.js";
 
 export function initPatchModal() {
+  wireMountSelect("patch-mount", "patch-pitch");
   document.getElementById("btn-patch").onclick = () => openModal();
   document.querySelector("#modal-patch .modal-close").onclick = () => closeModal();
 
