@@ -13,6 +13,7 @@ from ..fixtures.qxf_import import parse_qxf
 from ..fixtures.schema import CustomChannel, FixtureProfile, RoleRange
 from ..groups.model import Group
 from ..room.model import (
+    AnimationPoint,
     FixtureInstance,
     Orientation,
     RoomDimensions,
@@ -21,7 +22,7 @@ from ..room.model import (
     Vec2,
     Vec3,
 )
-from ..show.animation import Animation, AnimationTrack, Keyframe
+from ..show.animation import Animation, AnimationTrack, Keyframe, PatternAnimation
 
 router = APIRouter(prefix="/api")
 
@@ -345,6 +346,49 @@ def delete_room_object(object_id: str):
     return {"ok": True}
 
 
+# ---------------------------------------------------------- animation points
+
+class AnimationPointIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    position: Vec3In
+
+
+@router.post("/room/points")
+def add_animation_point(payload: AnimationPointIn):
+    ctx = get_context()
+    point_id = payload.id or f"pt-{uuid.uuid4().hex[:8]}"
+    point = AnimationPoint(
+        id=point_id, name=payload.name,
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
+    )
+    ctx.engine.room.add_animation_point(point)
+    ctx.persist_room()
+    return point.to_dict()
+
+
+@router.put("/room/points/{point_id}")
+def update_animation_point(point_id: str, payload: AnimationPointIn):
+    ctx = get_context()
+    if point_id not in ctx.engine.room.animation_points:
+        raise HTTPException(404, "point not found")
+    point = AnimationPoint(
+        id=point_id, name=payload.name,
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
+    )
+    ctx.engine.room.add_animation_point(point)
+    ctx.persist_room()
+    return point.to_dict()
+
+
+@router.delete("/room/points/{point_id}")
+def delete_animation_point(point_id: str):
+    ctx = get_context()
+    ctx.engine.room.remove_animation_point(point_id)
+    ctx.persist_room()
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------- groups
 
 @router.get("/groups")
@@ -510,6 +554,7 @@ def control_blackout():
 
 class KeyframeIn(BaseModel):
     time_s: float
+    point_id: Optional[str] = None
     target_point: Optional[Vec3In] = None
     color: Optional[tuple[int, int, int]] = None
     dimmer: Optional[int] = None
@@ -519,6 +564,7 @@ class KeyframeIn(BaseModel):
 class AnimationTrackIn(BaseModel):
     target_id: str
     keyframes: list[KeyframeIn] = []
+    time_offset_s: float = 0.0
 
 
 class AnimationIn(BaseModel):
@@ -544,6 +590,7 @@ def save_animation(payload: AnimationIn):
             keyframes=[
                 Keyframe(
                     time_s=k.time_s,
+                    point_id=k.point_id,
                     target_point=Vec3(**k.target_point.model_dump()) if k.target_point else None,
                     color=k.color,
                     dimmer=k.dimmer,
@@ -551,6 +598,7 @@ def save_animation(payload: AnimationIn):
                 )
                 for k in t.keyframes
             ],
+            time_offset_s=t.time_offset_s,
         )
         for t in payload.tracks
     ]
@@ -581,6 +629,64 @@ def play_animation(animation_id: str):
 @router.post("/animations/{animation_id}/stop")
 def stop_animation(animation_id: str):
     get_context().stop_animation(animation_id)
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ patterns
+#
+# "Basic" freestyler-style animations: a raw pan/tilt movement shape sent
+# straight to the fixture(s), no room-space calculation and no color (that's
+# a separate, later concern) -- see PatternAnimation/PatternPlayer.
+
+class PatternIn(BaseModel):
+    id: Optional[str] = None
+    name: str
+    target_id: str
+    shape: str = "circle"
+    speed_hz: float = 0.2
+    pan_center: int = 128
+    tilt_center: int = 128
+    pan_size: int = 80
+    tilt_size: int = 80
+    phase_deg: float = 0.0
+
+
+@router.get("/patterns")
+def list_patterns():
+    return [p.to_dict() for p in get_context().patterns.values()]
+
+
+@router.post("/patterns")
+def save_pattern(payload: PatternIn):
+    ctx = get_context()
+    pattern_id = payload.id or f"pat-{uuid.uuid4().hex[:8]}"
+    pattern = PatternAnimation(id=pattern_id, **payload.model_dump(exclude={"id"}))
+    ctx.patterns[pattern_id] = pattern
+    ctx.persist_patterns()
+    return pattern.to_dict()
+
+
+@router.delete("/patterns/{pattern_id}")
+def delete_pattern(pattern_id: str):
+    ctx = get_context()
+    ctx.stop_pattern(pattern_id)
+    ctx.patterns.pop(pattern_id, None)
+    ctx.persist_patterns()
+    return {"ok": True}
+
+
+@router.post("/patterns/{pattern_id}/play")
+def play_pattern(pattern_id: str):
+    ctx = get_context()
+    if pattern_id not in ctx.patterns:
+        raise HTTPException(404, "pattern not found")
+    ctx.play_pattern(pattern_id)
+    return {"ok": True}
+
+
+@router.post("/patterns/{pattern_id}/stop")
+def stop_pattern(pattern_id: str):
+    get_context().stop_pattern(pattern_id)
     return {"ok": True}
 
 

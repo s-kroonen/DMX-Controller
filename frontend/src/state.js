@@ -6,7 +6,7 @@
 export const state = {
   room: {
     name: "", dimensions: { width: 10, depth: 10, height: 4 },
-    floor_points: [], fixtures: [], safety_zones: [], objects: [],
+    floor_points: [], fixtures: [], safety_zones: [], objects: [], animation_points: [],
   },
   groups: [],
   profiles: [],

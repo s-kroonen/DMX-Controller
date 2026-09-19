@@ -1,4 +1,13 @@
-from app.room.model import FixtureInstance, Room, RoomDimensions, RoomObject, SafetyZone, Vec2, Vec3
+from app.room.model import (
+    AnimationPoint,
+    FixtureInstance,
+    Room,
+    RoomDimensions,
+    RoomObject,
+    SafetyZone,
+    Vec2,
+    Vec3,
+)
 
 
 def test_effective_floor_points_falls_back_to_rectangle():
@@ -100,6 +109,17 @@ def test_apply_shape_no_op_when_shape_unchanged():
     assert room.fixtures["f1"].position.x == 3
     assert room.fixtures["f1"].position.y == -2
     assert room.fixtures["f1"].position.z == 1.5
+
+
+def test_animation_point_round_trip_and_rescale():
+    room = Room(dimensions=RoomDimensions(width=10, depth=10, height=4))
+    room.add_animation_point(AnimationPoint(id="pt1", name="Center stage", position=Vec3(5, 5, 2)))
+    restored = Room.from_dict(room.to_dict())
+    assert restored.animation_points["pt1"].name == "Center stage"
+
+    room.apply_shape([], RoomDimensions(width=20, depth=20, height=8))
+    assert room.animation_points["pt1"].position.x == 10
+    assert room.animation_points["pt1"].position.z == 4
 
 
 def test_clamp_position_keeps_point_inside_room_bounds():

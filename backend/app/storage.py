@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .groups.model import Group
 from .room.model import Room
-from .show.animation import Animation
+from .show.animation import Animation, PatternAnimation
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -45,6 +45,10 @@ class Storage:
     @property
     def fixtures_dir(self) -> Path:
         return self.data_dir / "fixtures"
+
+    @property
+    def patterns_path(self) -> Path:
+        return self.data_dir / "patterns.json"
 
     def load_room(self) -> Room:
         if self.room_path.exists():
@@ -82,4 +86,14 @@ class Storage:
     def save_animations(self, animations: list[Animation]) -> None:
         self.animations_path.write_text(
             json.dumps([a.to_dict() for a in animations], indent=2)
+        )
+
+    def load_patterns(self) -> list[PatternAnimation]:
+        if self.patterns_path.exists():
+            return [PatternAnimation.from_dict(p) for p in json.loads(self.patterns_path.read_text())]
+        return []
+
+    def save_patterns(self, patterns: list[PatternAnimation]) -> None:
+        self.patterns_path.write_text(
+            json.dumps([p.to_dict() for p in patterns], indent=2)
         )
