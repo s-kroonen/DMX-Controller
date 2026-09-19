@@ -190,10 +190,13 @@ function reattachGizmoForMode() {
     transformControls.showZ = false;
   } else if (gizmoMode === "yaw") {
     transformControls.setMode("rotate");
-    transformControls.setSpace("world"); // world Z is always vertical, regardless of pitch
+    // Three.js is Y-up, so world Y (not Z) is vertical -- group's own yaw
+    // axis (its local Z) always maps to world Y regardless of its current
+    // rotation, since rotating around an axis never moves that axis.
+    transformControls.setSpace("world");
     transformControls.showX = false;
-    transformControls.showY = false;
-    transformControls.showZ = true;
+    transformControls.showY = true;
+    transformControls.showZ = false;
   } else {
     transformControls.setMode("translate");
     transformControls.setSpace("world");
