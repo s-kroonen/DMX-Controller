@@ -13,6 +13,12 @@ const COLLAPSED_PREF_KEY = "fixtureDetailsCollapsed";
 
 let lastLoadedFixtureId = null;
 let lastGroupsKey = "";
+// Set the moment any field is edited, cleared on save or on switching to a
+// different fixture -- the WS snapshot broadcasts ~10x/second, and without
+// this an edit gets silently overwritten by the next broadcast the instant
+// focus leaves the field (blur, not just "still focused", was the actual
+// window the old focus-only check missed).
+let formDirty = false;
 
 export function initFixtureDetailsPanel() {
   const header = document.getElementById("fixture-details-toggle");
@@ -24,6 +30,10 @@ export function initFixtureDetailsPanel() {
   for (const btn of document.querySelectorAll(".subtab-btn")) {
     btn.onclick = () => setActiveSubtab(btn.dataset.subtab);
   }
+
+  const form = document.getElementById("fixture-details-form");
+  form.addEventListener("input", () => { formDirty = true; });
+  form.addEventListener("change", () => { formDirty = true; });
 
   refreshProfileSelect();
   applyCollapsed(loadPref(COLLAPSED_PREF_KEY, false));
@@ -85,17 +95,17 @@ export function renderFixtureDetailsPanel() {
   empty.classList.add("hidden");
   form.classList.remove("hidden");
 
-  // Don't stomp on fields the user is actively editing -- only (re)load
-  // when the selected fixture changes, or when nothing in the form has
-  // focus (e.g. a gizmo drag just moved this same fixture).
-  const formHasFocus = form.contains(document.activeElement);
+  // Don't stomp on an unsaved edit -- only (re)load when the selected
+  // fixture changes, or when the form has no pending edits (e.g. a gizmo
+  // drag just moved this same fixture and nothing here was touched).
   const fixtureChanged = fixture.id !== lastLoadedFixtureId;
-  if (fixtureChanged || !formHasFocus) {
+  if (fixtureChanged) formDirty = false;
+  if (fixtureChanged || !formDirty) {
     fillForm(fixture);
   }
 
   const groupsKey = state.groups.map((g) => `${g.id}:${g.fixture_ids.join(",")}`).join("|");
-  if (fixtureChanged || groupsKey !== lastGroupsKey || !formHasFocus) {
+  if (fixtureChanged || groupsKey !== lastGroupsKey || !formDirty) {
     lastGroupsKey = groupsKey;
     renderGroupCheckboxes(fixture);
   }
@@ -119,6 +129,13 @@ function fillForm(fixture) {
   document.getElementById("fd-invert-tilt").checked = fixture.inverted_tilt;
   document.getElementById("fd-pan-offset").value = fixture.pan_offset_deg || 0;
   document.getElementById("fd-tilt-offset").value = fixture.tilt_offset_deg || 0;
+
+  // Pan/tilt mechanical range lives on the PROFILE (shared by every
+  // instance of that fixture type), not the instance -- editing it here
+  // is a shortcut into the profile rather than a fixture field.
+  const profile = state.profileById(fixture.profile_id);
+  document.getElementById("fd-pan-range").value = profile?.pan_range_deg ?? 540;
+  document.getElementById("fd-tilt-range").value = profile?.tilt_range_deg ?? 270;
 }
 
 // Group membership actually lives on Group.fixture_ids (the group is the
@@ -175,6 +192,15 @@ async function saveFixture() {
     tilt_offset_deg: Number(document.getElementById("fd-tilt-offset").value) || 0,
   };
   await api.updateFixture(fixture.id, payload);
+
+  const profile = state.profileById(payload.profile_id);
+  const panRange = Number(document.getElementById("fd-pan-range").value) || 540;
+  const tiltRange = Number(document.getElementById("fd-tilt-range").value) || 270;
+  if (profile && (profile.pan_range_deg !== panRange || profile.tilt_range_deg !== tiltRange)) {
+    await api.saveProfile({ ...profile, pan_range_deg: panRange, tilt_range_deg: tiltRange });
+  }
+
+  formDirty = false;
   await reloadRoomAndGroups();
   notifyStateChange();
 }
