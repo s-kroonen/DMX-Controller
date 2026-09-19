@@ -275,6 +275,22 @@ Open the **Sound** window (top bar). It works like Freestyler's audio section:
 API: `GET /api/audio/devices|status|function-types`, `POST /api/audio/select|start|stop|config|tap|bpm` (`config` takes `sound_mode`),
 `POST|PATCH|DELETE /api/audio/functions`.
 
+- **Mobile UI** (`frontend/mobile/`, served at `/mobile/` -- linked from the
+  desktop UI's top bar): the desktop UI's floating windows and 3D scene need
+  more screen than a phone has, so this is a deliberately different layout
+  rather than a squeezed-down copy -- one full-screen tab at a time (bottom
+  nav: **Select / Control / Aim / Shows / More**) instead of overlaid
+  windows, and a flat top-down 2D floor plan instead of the 3D view (tap
+  it to aim the current selection, with an aim-height slider, using the
+  same room-space `aim` endpoint). Control groups RGB/dimmer-strobe/
+  pan-tilt/custom channels into collapsible cards on one screen; Shows
+  lists animations/patterns to play/stop (creating/editing them stays a
+  desktop task); More has DMX/sound status and a link back to the full
+  desktop UI. Blackout is pinned in the top bar on every screen. Reuses
+  the same backend and the same `api.js`/`state.js`/`main_data.js`
+  modules as the desktop UI (imported directly, no duplicated fetch/state
+  logic) -- only the DOM/layout is different.
+
 ## Known limitations / next steps
 
 - Light-level behaviour of the bundled profiles is unverified against real fixtures

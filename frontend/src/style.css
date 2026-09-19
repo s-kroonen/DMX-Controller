@@ -78,6 +78,7 @@ html, body, #app {
   font-size: 0.9em;
 }
 .toggle-btn.active { background: var(--accent); border-color: var(--accent); }
+a.toggle-btn { text-decoration: none; display: inline-block; }
 .primary-btn { background: var(--accent); border-color: var(--accent); }
 .danger-btn { background: var(--danger); border-color: var(--danger); font-weight: bold; }
 button:hover { filter: brightness(1.15); }
