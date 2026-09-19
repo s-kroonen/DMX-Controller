@@ -42,6 +42,7 @@ export const api = {
 
   listGroups: () => req("GET", "/groups"),
   createGroup: (group) => req("POST", "/groups", group),
+  updateGroup: (id, group) => req("PUT", `/groups/${id}`, group),
   deleteGroup: (id) => req("DELETE", `/groups/${id}`),
 
   setColor: (targetId, red, green, blue, white) =>

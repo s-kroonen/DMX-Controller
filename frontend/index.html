@@ -45,6 +45,43 @@
           <h3>Fixtures</h3>
           <div id="fixture-buttons" class="button-grid"></div>
         </div>
+        <div class="sidebar-section" id="fixture-details-section">
+          <h3 id="fixture-details-toggle" class="collapsible-header">
+            Details <span id="fixture-details-caret">&#9662;</span>
+          </h3>
+          <div id="fixture-details-body">
+            <div id="fixture-details-empty" class="hint">Select a single fixture to edit its details.</div>
+            <div id="fixture-details-form" class="hidden">
+              <label>Name <input id="fd-name" type="text"></label>
+              <label>Profile
+                <select id="fd-profile"></select>
+              </label>
+              <label>Universe <input id="fd-universe" type="number" min="1"></label>
+              <label>Start address <input id="fd-address" type="number" min="1" max="512"></label>
+              <fieldset>
+                <legend>Position (meters)</legend>
+                <label>X <input id="fd-x" type="number" step="0.1"></label>
+                <label>Y <input id="fd-y" type="number" step="0.1"></label>
+                <label>Z <input id="fd-z" type="number" step="0.1"></label>
+              </fieldset>
+              <fieldset>
+                <legend>Mounting orientation (degrees)</legend>
+                <label>Yaw <input id="fd-yaw" type="number" step="1"></label>
+                <label>Pitch <input id="fd-pitch" type="number" step="1"></label>
+              </fieldset>
+              <label><input id="fd-invert-pan" type="checkbox"> Invert pan</label>
+              <label><input id="fd-invert-tilt" type="checkbox"> Invert tilt</label>
+              <fieldset>
+                <legend>Groups</legend>
+                <div id="fd-groups"></div>
+              </fieldset>
+              <div class="btn-row">
+                <button id="fd-save" type="button" class="primary-btn">Save</button>
+                <button id="fd-delete" type="button" class="danger-btn">Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="sidebar-section" id="selection-summary">
           <h3>Selection</h3>
           <div id="selection-text">Nothing selected</div>
@@ -53,6 +90,10 @@
 
       <main id="stage">
         <div id="scene-container"></div>
+        <div id="gizmo-toolbar" class="gizmo-toolbar">
+          <button id="gizmo-mode-translate" class="toggle-btn active" title="Move (drag XYZ arrows)">Move</button>
+          <button id="gizmo-mode-rotate" class="toggle-btn" title="Rotate (drag yaw ring) -- fixtures only">Rotate</button>
+        </div>
       </main>
     </div>
 
@@ -135,10 +176,7 @@
         </fieldset>
         <label><input id="patch-invert-pan" type="checkbox"> Invert pan</label>
         <label><input id="patch-invert-tilt" type="checkbox"> Invert tilt</label>
-        <div class="btn-row">
-          <button id="patch-submit" class="primary-btn">Add Fixture</button>
-          <button id="patch-cancel-edit" type="button" class="hidden">Cancel edit</button>
-        </div>
+        <button id="patch-submit" class="primary-btn">Add Fixture</button>
         <hr>
         <h3>Patched fixtures</h3>
         <div id="patch-list"></div>

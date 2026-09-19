@@ -166,9 +166,19 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
     the scene (or via the sidebar) or a room object (person/box/surface --
     walls need two points, so they're not draggable this way) to attach a
     drag gizmo (XYZ arrows, like a 3D-slicer/CAD tool) and reposition it;
-    the new position saves once you release. Multi-select and group
-    selections don't get a gizmo (there's no single position to drag).
-    Room shape and safety zones are never edited here -- see above for why.
+    the new position saves once you release. A Move/Rotate toggle over the
+    3D view switches the gizmo to a rotation ring for a selected fixture's
+    yaw (room objects have no orientation, so Rotate is disabled/skipped
+    for them). Multi-select and group selections don't get a gizmo
+    (there's no single position to drag). Room shape and safety zones are
+    never edited here -- see above for why.
+  - The **Details** panel, under the fixture list in the sidebar (not a
+    popup like everything else), loads the currently selected fixture's
+    full data -- name/profile/patch address, position, mounting yaw/pitch,
+    pan/tilt inversion, and group membership checkboxes -- for editing or
+    deleting that one fixture. It's collapsible, and whether it's
+    collapsed persists across a refresh (localStorage, like the floating
+    panels). The Patch screen stays add-only.
   - Fixtures render with a model shaped for their `fixture_type` --
     moving head (base/yoke/head), smoke machine (box + nozzle), PAR can
     (cylinder), or a plain box for anything else -- with a bright green

@@ -26,6 +26,7 @@ let aimSurfaces = []; // meshes the click-to-aim raycaster can hit (floor/walls/
 let gizmoAttachedFixtureId = null;
 let selectedObjectId = null; // a room object selected by clicking it in 3D (non-wall only)
 let suppressNextClick = false;
+let gizmoMode = "translate"; // "translate" | "rotate" -- rotate only applies to fixtures
 
 // The WS broadcast triggers a state-change ~10x/second even when nothing
 // structural changed. Rebuilding the whole scene graph that often would
@@ -82,6 +83,7 @@ export function initScene3D(container) {
   scene.add(dir);
 
   initGizmo();
+  initGizmoToolbarUI();
 
   window.addEventListener("resize", () => {
     camera.aspect = container.clientWidth / container.clientHeight;
@@ -104,11 +106,13 @@ function saveCameraPref() {
   });
 }
 
-// A drag-to-reposition gizmo (XYZ arrows, like a 3D-slicer/CAD tool) for
-// the single selected fixture or a clicked room object (person/box/
-// surface -- walls need two points, so they're not gizmo-draggable).
+// A drag gizmo (XYZ arrows for move, a rotation ring for yaw -- like a 3D
+// slicer/CAD tool's move/rotate mode toggle) for the single selected
+// fixture, or plain move-only for a clicked room object (person/box/
+// surface -- walls need two points, so they're not gizmo-draggable, and
+// objects have no orientation field so rotate never applies to them).
 // Disables orbiting while dragging so the two controls don't fight over
-// the mouse, and persists the new position only once the drag ends.
+// the mouse, and persists the new position/rotation only once the drag ends.
 function initGizmo() {
   transformControls = new TransformControls(camera, renderer.domElement);
   transformControls.setMode("translate");
@@ -121,10 +125,10 @@ function initGizmo() {
   transformControls.addEventListener("dragging-changed", (event) => {
     controls.enabled = !event.value;
     if (!event.value) {
-      // drag just ended -- persist the new position, and swallow the
-      // click event the browser fires right after mouseup so releasing
-      // the gizmo doesn't also re-aim/re-select at wherever the pointer
-      // happened to land.
+      // drag just ended -- persist the new position/rotation, and swallow
+      // the click event the browser fires right after mouseup so
+      // releasing the gizmo doesn't also re-aim/re-select at wherever the
+      // pointer happened to land.
       if (gizmoAttachedFixtureId) persistGizmoFixturePosition();
       else if (selectedObjectId) persistGizmoObjectPosition();
       suppressNextClick = true;
@@ -132,22 +136,76 @@ function initGizmo() {
   });
 }
 
+// Rotate mode only makes sense for a fixture (yaw), never a plain room
+// object. Restricted to the Z ring since yaw is the only rotation the
+// gizmo drives here -- pitch stays a form field in the Details panel.
+export function setGizmoMode(mode) {
+  if (mode === "rotate" && !gizmoAttachedFixtureId) return; // nothing rotatable attached
+  gizmoMode = mode;
+  transformControls.setMode(mode);
+  if (mode === "rotate") {
+    transformControls.showX = false;
+    transformControls.showY = false;
+    transformControls.showZ = true;
+  } else {
+    transformControls.showX = true;
+    transformControls.showY = true;
+    transformControls.showZ = true;
+  }
+}
+
+export function getGizmoMode() {
+  return gizmoMode;
+}
+
+// Move/Rotate toggle overlaid on the 3D stage. Rotate only makes sense for
+// a single selected fixture (yaw), so it's disabled otherwise and clicking
+// it does nothing until a fixture is attached to the gizmo.
+function initGizmoToolbarUI() {
+  const translateBtn = document.getElementById("gizmo-mode-translate");
+  const rotateBtn = document.getElementById("gizmo-mode-rotate");
+  translateBtn.onclick = () => {
+    setGizmoMode("translate");
+    refreshGizmoToolbarUI();
+  };
+  rotateBtn.onclick = () => {
+    setGizmoMode("rotate");
+    refreshGizmoToolbarUI();
+  };
+  refreshGizmoToolbarUI();
+}
+
+function refreshGizmoToolbarUI() {
+  const translateBtn = document.getElementById("gizmo-mode-translate");
+  const rotateBtn = document.getElementById("gizmo-mode-rotate");
+  translateBtn.classList.toggle("active", gizmoMode === "translate");
+  rotateBtn.classList.toggle("active", gizmoMode === "rotate");
+  rotateBtn.disabled = !gizmoAttachedFixtureId;
+}
+
 function persistGizmoFixturePosition() {
   const entry = fixtureMeshes.get(gizmoAttachedFixtureId);
   const fixture = state.fixtureById(gizmoAttachedFixtureId);
   if (!entry || !fixture) return;
   const pos = entry.group.position;
+  const yawDeg = normalizeDeg(-THREE.MathUtils.radToDeg(entry.group.rotation.z));
   api.updateFixture(fixture.id, {
     name: fixture.name,
     profile_id: fixture.profile_id,
     universe: fixture.universe,
     start_address: fixture.start_address,
     position: { x: round3(pos.x), y: round3(pos.y), z: round3(pos.z) },
-    orientation: fixture.orientation,
+    orientation: { ...fixture.orientation, yaw_deg: round3(yawDeg) },
     group_ids: fixture.group_ids,
     inverted_pan: fixture.inverted_pan,
     inverted_tilt: fixture.inverted_tilt,
   }).catch(console.error);
+}
+
+function normalizeDeg(deg) {
+  let d = deg % 360;
+  if (d < 0) d += 360;
+  return d;
 }
 
 function persistGizmoObjectPosition() {
@@ -197,17 +255,25 @@ function updateGizmoAttachment() {
     ? objectMeshes.get(selectedObjectId)?.group
     : null;
 
-  if ((transformControls.object || null) === (wantedMesh || null)) return;
+  if ((transformControls.object || null) === (wantedMesh || null)) {
+    refreshGizmoToolbarUI();
+    return;
+  }
 
   if (wantedMesh) {
     transformControls.attach(wantedMesh);
     transformControls.visible = true;
     transformControls.enabled = true;
+    // Room objects have no orientation field -- rotate mode never applies
+    // to them, so dropping the gizmo onto one always falls back to move.
+    if (!singleFixtureId && gizmoMode === "rotate") setGizmoMode("translate");
   } else {
     transformControls.detach();
     transformControls.visible = false;
     transformControls.enabled = false;
+    if (gizmoMode === "rotate") setGizmoMode("translate");
   }
+  refreshGizmoToolbarUI();
 }
 
 function animate() {
@@ -473,18 +539,19 @@ function updateFixtures() {
       fixturesGroup.add(entry.group);
     }
 
-    // Don't stomp on a position that's actively being dragged by the gizmo.
-    if (gizmoAttachedFixtureId !== fixture.id || !transformControls.dragging) {
+    // Don't stomp on a position/rotation that's actively being dragged by
+    // the gizmo (translate or rotate mode both attach to the same group).
+    const isDraggingThis = gizmoAttachedFixtureId === fixture.id && transformControls.dragging;
+    if (!isDraggingThis) {
       entry.group.position.set(fixture.position.x, fixture.position.y, fixture.position.z);
+      // The body model (and the front-direction arrow, both children of
+      // this group) is authored facing local +Y at zero rotation; rotating
+      // the whole group to the fixture's mounted "front" lets the rotate
+      // gizmo manipulate this same rotation directly and read it straight
+      // back out as the new yaw_deg on drag-end.
+      const yawRad = THREE.MathUtils.degToRad(fixture.orientation?.yaw_deg || 0);
+      entry.group.rotation.z = -yawRad;
     }
-
-    // The body model is authored facing +Y at zero rotation; rotate it (and
-    // the front-direction arrow) to the fixture's mounted "front" so you can
-    // see at a glance which way it's calibrated to call pan/tilt zero.
-    const yawRad = THREE.MathUtils.degToRad(fixture.orientation?.yaw_deg || 0);
-    entry.bodyGroup.rotation.z = -yawRad;
-    const frontDir = entry.arrow.userData.frontDir.set(Math.sin(yawRad), Math.cos(yawRad), 0);
-    entry.arrow.setDirection(frontDir);
 
     entry.bodyMaterial.color.set(state.isSelected(fixture.id) ? 0xffffff : entry.bodyMaterial.userData.baseColor);
 
@@ -503,10 +570,20 @@ function updateFixtures() {
         fixtureState.last_target.x, fixtureState.last_target.y, fixtureState.last_target.z
       );
     }
+    // The beam is a child of `group`, which now carries the fixture's yaw
+    // rotation -- so its endpoint (computed in the room-space frame, like
+    // fixture.position) needs the inverse of that rotation applied to land
+    // in the group's local space, not just a plain position subtraction.
     const positions = entry.beam.geometry.attributes.position;
-    const localEnd = beamEnd.clone().sub(entry.group.position);
+    const dx = beamEnd.x - entry.group.position.x;
+    const dy = beamEnd.y - entry.group.position.y;
+    const dz = beamEnd.z - entry.group.position.z;
+    const cos = Math.cos(entry.group.rotation.z);
+    const sin = Math.sin(entry.group.rotation.z);
+    const localX = dx * cos + dy * sin;
+    const localY = -dx * sin + dy * cos;
     positions.setXYZ(0, 0, 0, 0);
-    positions.setXYZ(1, localEnd.x, localEnd.y, localEnd.z);
+    positions.setXYZ(1, localX, localY, dz);
     positions.needsUpdate = true;
 
     const beamBlocked = fixtureState && fixtureState.blocked_by_safety_zone;
@@ -515,11 +592,14 @@ function updateFixtures() {
 }
 
 // Body shapes are authored so their "front" faces local +Y at zero
-// rotation -- updateFixtures() then rotates the whole bodyGroup by the
-// fixture's mounted orientation.yaw_deg so the model actually shows which
-// way it's calibrated to call pan/tilt zero, not just a featureless ball.
-// A bright green arrow is added on top regardless of body shape, since a
-// small shape asymmetry can be hard to read at a glance across a room.
+// rotation -- updateFixtures() then rotates the whole outer fixture group
+// (bodyGroup, arrow and beam are all its children) by the fixture's
+// mounted orientation.yaw_deg, so the model actually shows which way it's
+// calibrated to call pan/tilt zero, not just a featureless ball, and the
+// rotate gizmo (which attaches to that same outer group) can drive this
+// rotation directly. A bright green arrow is added on top regardless of
+// body shape, since a small shape asymmetry can be hard to read at a
+// glance across a room.
 function buildFixtureBody(fixtureType, material) {
   const bodyGroup = new THREE.Group();
   const lensMat = new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0x554400 });
@@ -586,13 +666,14 @@ function createFixtureMesh(fixture) {
   const bodyGroup = buildFixtureBody(fixtureType, bodyMaterial);
   group.add(bodyGroup);
 
-  // Unmistakable front-direction indicator, independent of body shape,
-  // so "where is the front" always has one clear answer regardless of
-  // how subtle a given model's asymmetry is.
+  // Unmistakable front-direction indicator, independent of body shape, so
+  // "where is the front" always has one clear answer regardless of how
+  // subtle a given model's asymmetry is. Its local direction is always
+  // +Y -- the group's own yaw rotation (set in updateFixtures()) is what
+  // actually points it the right way, so it needs no per-tick recompute.
   const arrow = new THREE.ArrowHelper(
     new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), 0.3, 0x33ff66, 0.09, 0.05
   );
-  arrow.userData.frontDir = new THREE.Vector3(0, 1, 0);
   group.add(arrow);
 
   const beamGeo = new THREE.BufferGeometry().setFromPoints([

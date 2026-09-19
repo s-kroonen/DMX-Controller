@@ -364,6 +364,18 @@ def create_group(payload: GroupIn):
     return group.to_dict()
 
 
+@router.put("/groups/{group_id}")
+def update_group(group_id: str, payload: GroupIn):
+    ctx = get_context()
+    if group_id not in ctx.engine.groups:
+        raise HTTPException(status_code=404, detail="group not found")
+    group = Group(id=group_id, name=payload.name, fixture_ids=payload.fixture_ids,
+                  color=payload.color)
+    ctx.engine.add_group(group)
+    ctx.persist_groups()
+    return group.to_dict()
+
+
 @router.delete("/groups/{group_id}")
 def delete_group(group_id: str):
     ctx = get_context()

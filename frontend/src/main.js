@@ -11,6 +11,7 @@ import { initRoomObjectsModal } from "./roomObjects.js";
 import { initDmxSetupModal, reconnectDmx } from "./dmxSetup.js";
 import { initWindowsMenu } from "./windowsMenu.js";
 import { initScene3D } from "./scene3d.js";
+import { initFixtureDetailsPanel, renderFixtureDetailsPanel } from "./fixtureDetails.js";
 import { loadInitialData } from "./main_data.js";
 
 function initModalCloseOnBackdrop() {
@@ -52,6 +53,7 @@ async function bootstrap() {
   onStateChange(() => {
     renderSidebar();
     updateDmxStatusPill();
+    renderFixtureDetailsPanel();
   });
 
   await loadInitialData();
@@ -59,6 +61,7 @@ async function bootstrap() {
   initPanels();
   initWindowsMenu();
   initPatchModal();
+  initFixtureDetailsPanel();
   initFixtureCreator();
   initRoomShapeModal();
   initRoomObjectsModal();
