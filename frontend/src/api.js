@@ -46,8 +46,11 @@ export const api = {
 
   setColor: (targetId, red, green, blue, white) =>
     req("POST", "/control/color", { target_id: targetId, red, green, blue, white }),
-  setDimmer: (targetId, value) => req("POST", "/control/dimmer", { target_id: targetId, value }),
-  setStrobe: (targetId, value) => req("POST", "/control/strobe", { target_id: targetId, value }),
+  // dimmer/strobe/shutter take the WHOLE selection (array of fixture/group ids) in one call:
+  // the engine judges shared-vs-separate dimmer/strobe channels across the whole set.
+  setDimmer: (targetIds, value) => req("POST", "/control/dimmer", { target_ids: targetIds, value }),
+  setStrobe: (targetIds, value) => req("POST", "/control/strobe", { target_ids: targetIds, value }),
+  setShutter: (targetIds, closed) => req("POST", "/control/shutter", { target_ids: targetIds, closed }),
   setPanTilt: (targetId, pan, tilt, panFine = 0, tiltFine = 0) =>
     req("POST", "/control/pan-tilt", { target_id: targetId, pan, tilt, pan_fine: panFine, tilt_fine: tiltFine }),
   aim: (targetId, x, y, z, allowUnsafe = false) =>

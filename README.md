@@ -29,10 +29,14 @@ never touch a serial port directly. Swap `SimulatedDmxOutput` for
 **Windows (recommended): one command from the repo root**
 
 ```powershell
-.un.ps1                # real dongle on COM7 -> http://localhost:8000
-.un.ps1 -Port COM5     # a different COM port
-.un.ps1 -Sim           # no hardware (simulated output)
-.un.ps1 -Lan           # also reachable from a phone/tablet on the LAN
+.
+un.ps1                # real dongle on COM7 -> http://localhost:8000
+.
+un.ps1 -Port COM5     # a different COM port
+.
+un.ps1 -Sim           # no hardware (simulated output)
+.
+un.ps1 -Lan           # also reachable from a phone/tablet on the LAN
 ```
 
 Only one process can hold the COM port. If the UI says the port is busy, close
@@ -115,12 +119,16 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   state for controlling one fixture or a whole group at once -- color,
   dimmer, strobe/shutter, raw pan/tilt, custom-channel sliders, and 3D
   aiming, all independent so RGB + strobe + pan/tilt can be driven
-  simultaneously without switching views (freestyler-style). The
-  Strobe/Shutter window has separate Dimmer and Strobe Speed sliders; on
-  fixtures that multiplex both onto one physical channel (common on cheap
-  PARs -- see the bundled `cheap-par-shared-dimmer-strobe-4ch` profile),
-  the UI detects the shared channel and greys out whichever slider you
-  didn't touch last, since only one of them is actually in effect.
+  simultaneously without switching views (freestyler-style). The Strobe/Shutter window is freestyler-style: Dimmer and Strobe sliders in
+  0-100 % (plus Off/Slow/Med/Max strobe presets and Closed/Open), independent
+  of what any fixture's DMX channels look like. The engine maps each percentage
+  onto that fixture's real values via per-role `role_ranges` in its profile
+  (e.g. the bundled 14ch head puts dimmer at DMX 10-134 and strobe at 135-239
+  on ONE shared channel), so mixed fixtures behave alike. When every selected
+  fixture shares one dimmer/strobe channel, touching strobe drops the dimmer to
+  0 and touching the dimmer stops the strobe; in a mixed selection (e.g. a head
+  plus a Beamz with separate channels) the dimmer is held and everything strobes
+  together.
 - **Animation engine** (`app/show/animation.py`): keyframes reference
   room-space target points plus color/dimmer/strobe, not raw channel
   values, so the IK core is what turns a keyframed path into correct

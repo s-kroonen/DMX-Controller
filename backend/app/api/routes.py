@@ -10,7 +10,7 @@ from ..context import get_context
 from ..dmx.dmx4all import Dmx4AllOutput, list_serial_ports
 from ..dmx.usb_procs import find_holders
 from ..fixtures.qxf_import import parse_qxf
-from ..fixtures.schema import CustomChannel, FixtureProfile
+from ..fixtures.schema import CustomChannel, FixtureProfile, RoleRange
 from ..groups.model import Group
 from ..room.model import (
     FixtureInstance,
@@ -42,6 +42,12 @@ class CustomChannelIn(BaseModel):
     max_value: int = 255
 
 
+class RoleRangeIn(BaseModel):
+    min: int
+    max: int
+    zero: int = 0
+
+
 class FixtureProfileIn(BaseModel):
     id: Optional[str] = None
     name: str
@@ -54,6 +60,9 @@ class FixtureProfileIn(BaseModel):
     tilt_range_deg: Optional[float] = 270.0
     defaults: dict[str, int] = {}
     fixture_type: str = "generic"
+    # None = keep whatever the existing profile with this id has (the fixture
+    # creator UI doesn't edit ranges, so re-saving must not silently drop them)
+    role_ranges: Optional[dict[str, RoleRangeIn]] = None
 
 
 @router.post("/fixtures/profiles")
@@ -61,6 +70,11 @@ def create_or_update_profile(payload: FixtureProfileIn):
     """The fixture creator: define a new type, or edit a user-saved one."""
     ctx = get_context()
     profile_id = payload.id or f"custom-{uuid.uuid4().hex[:8]}"
+    if payload.role_ranges is not None:
+        role_ranges = {r: RoleRange(**v.model_dump()) for r, v in payload.role_ranges.items()}
+    else:
+        existing = ctx.library.get(profile_id)
+        role_ranges = dict(existing.role_ranges) if existing else {}
     profile = FixtureProfile(
         id=profile_id,
         name=payload.name,
@@ -73,6 +87,7 @@ def create_or_update_profile(payload: FixtureProfileIn):
         tilt_range_deg=payload.tilt_range_deg,
         defaults=payload.defaults,
         fixture_type=payload.fixture_type,
+        role_ranges=role_ranges,
     )
     ctx.library.save(profile)
     return profile.to_dict()
@@ -372,15 +387,47 @@ class TargetValueIn(BaseModel):
     value: int
 
 
+class LightTargets(BaseModel):
+    """One fixture/group id, or the whole selection. Dimmer/strobe/shutter
+    take the whole selection in ONE call because whether the fixtures share a
+    dimmer/strobe channel is judged across the whole set."""
+
+    target_id: Optional[str] = None
+    target_ids: Optional[list[str]] = None
+
+    def targets(self) -> list[str]:
+        ids = list(self.target_ids or [])
+        if self.target_id:
+            ids.append(self.target_id)
+        if not ids:
+            raise HTTPException(422, "target_id or target_ids is required")
+        return ids
+
+
+class LightValueIn(LightTargets):
+    value: int
+
+
+class ShutterIn(LightTargets):
+    closed: bool
+
+
 @router.post("/control/dimmer")
-def control_dimmer(payload: TargetValueIn):
-    get_context().engine.set_dimmer(payload.target_id, payload.value)
+def control_dimmer(payload: LightValueIn):
+    get_context().engine.set_dimmer(payload.targets(), payload.value)
     return {"ok": True}
 
 
 @router.post("/control/strobe")
-def control_strobe(payload: TargetValueIn):
-    get_context().engine.set_strobe(payload.target_id, payload.value)
+def control_strobe(payload: LightValueIn):
+    get_context().engine.set_strobe(payload.targets(), payload.value)
+    return {"ok": True}
+
+
+@router.post("/control/shutter")
+def control_shutter(payload: ShutterIn):
+    """Closed/Open buttons: closed = dark (values remembered), open = light on, no strobe."""
+    get_context().engine.set_shutter(payload.targets(), payload.closed)
     return {"ok": True}
 
 

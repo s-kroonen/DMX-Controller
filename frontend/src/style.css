@@ -191,3 +191,5 @@ button:hover { filter: brightness(1.15); }
 
 .keyframe-row { border: 1px solid var(--panel-border); border-radius: 6px; padding: 8px; margin: 6px 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; font-size: 0.8em; }
 .keyframe-row input { width: 100%; }
+
+.pct { opacity: 0.7; font-variant-numeric: tabular-nums; margin-left: 6px; }
