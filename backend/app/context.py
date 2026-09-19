@@ -14,6 +14,7 @@ from typing import Optional
 from .dmx.dmx4all import Dmx4AllConfig, Dmx4AllOutput
 from .dmx.interface import DmxOutput
 from .dmx.simulator import SimulatedDmxOutput
+from .audio.service import SoundService
 from .dmx.usb_procs import kill_holders
 from .fixtures.library import FixtureLibrary
 from .show.animation import Animation, AnimationPlayer
@@ -50,6 +51,7 @@ class AppContext:
         }
         self.players: dict[str, AnimationPlayer] = {}
         self.dmx.start()  # no-op if _build_initial_dmx_output already started it
+        self.sound = SoundService(self.engine, self.storage)
 
     def _build_initial_dmx_output(self) -> DmxOutput:
         port = os.environ.get("DMX4ALL_PORT")
@@ -187,6 +189,7 @@ class AppContext:
             player.stop()
 
     def shutdown(self) -> None:
+        self.sound.shutdown()
         for player in list(self.players.values()):
             player.stop()
         self.dmx.stop()

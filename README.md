@@ -212,6 +212,32 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
     bar lists every one with its current state and reopens it on click.
     The 3D camera's position/orbit target persist the same way.
 
+## Sound-to-light
+
+Open the **Sound** window (top bar). It works like Freestyler's audio section:
+
+- **Input:** pick a microphone/line-in, or a **loopback** device -- the loopback of an
+  output (speakers, headphones) captures exactly what this PC is playing, so
+  Spotify/browser/DJ software drives the lights with no cable. Loopback devices are
+  listed first; the default output is marked. (Windows, via WASAPI/PyAudioWPatch. A device
+  that Windows refuses to open reports the reason instead of failing silently.)
+- **Analysis:** level plus bass/mid/high meters (auto-gain, so volume doesn't matter),
+  a beat recogniser and BPM read-out with a beat indicator, gain and beat-sensitivity
+  sliders. **Tap** switches to tap tempo (a metronome from your taps) for music the
+  recogniser can't follow; switch back with the Beat selector.
+- **Functions** (add several, each with its own targets, e.g. the current selection):
+  VU dimmer, Beat flash, Beat color chase, Color organ (bass/mid/high -> R/G/B),
+  Beat strobe, Beat movement. Chases can run every 1/2/4/8 beats. Everything goes through
+  the normal engine, so profile ranges, shared dimmer/strobe channels etc. still apply.
+- **React to sound with: Off / Color / Motion / Both.** Color runs the dimmer, strobe and color
+  functions; Motion runs pan/tilt functions; Both runs everything. Use *Color* when an animation
+  owns the movement (sound never touches pan/tilt), *Motion* to leave colors alone. Functions
+  outside the chosen mode are shown greyed out as paused.
+- Inputs, mode and functions persist in `backend/data/audio.json`.
+
+API: `GET /api/audio/devices|status|function-types`, `POST /api/audio/select|start|stop|config|tap|bpm` (`config` takes `sound_mode`),
+`POST|PATCH|DELETE /api/audio/functions`.
+
 ## Known limitations / next steps
 
 - Light-level behaviour of the bundled profiles is unverified against real fixtures

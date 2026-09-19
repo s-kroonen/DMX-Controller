@@ -66,6 +66,18 @@ export const api = {
   playAnimation: (id) => req("POST", `/animations/${id}/play`),
   stopAnimation: (id) => req("POST", `/animations/${id}/stop`),
 
+  audioDevices: () => req("GET", "/audio/devices"),
+  audioStatus: () => req("GET", "/audio/status"),
+  audioSelect: (deviceId) => req("POST", "/audio/select", { device_id: deviceId }),
+  audioStart: () => req("POST", "/audio/start"),
+  audioStop: () => req("POST", "/audio/stop"),
+  audioConfig: (config) => req("POST", "/audio/config", config),
+  audioTap: () => req("POST", "/audio/tap"),
+  audioFunctionTypes: () => req("GET", "/audio/function-types"),
+  audioAddFunction: (fn) => req("POST", "/audio/functions", fn),
+  audioPatchFunction: (id, patch) => req("PATCH", `/audio/functions/${id}`, patch),
+  audioDeleteFunction: (id) => req("DELETE", `/audio/functions/${id}`),
+
   dmxPorts: () => req("GET", "/dmx/ports"),
   dmxStatus: () => req("GET", "/dmx/status"),
   dmxConnect: (port, baudRate) =>

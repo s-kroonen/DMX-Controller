@@ -32,6 +32,7 @@
       <button id="btn-room-objects" class="toggle-btn">Objects</button>
       <button id="btn-safety-zones" class="toggle-btn">Safety Zones</button>
       <button id="btn-animations" class="toggle-btn">Animations</button>
+      <button id="btn-sound" class="toggle-btn">Sound</button>
       <button id="btn-blackout" class="danger-btn">BLACKOUT</button>
     </header>
 
@@ -168,6 +169,54 @@
         <label>Tilt <input type="range" min="0" max="255" value="128" id="tilt-slider"></label>
         <label>Tilt fine <input type="range" min="0" max="255" value="0" id="tilt-fine-slider"></label>
         <div class="hint">Click a point in the 3D room to aim (uses room-space IK instead of raw pan/tilt).</div>
+      </div>
+    </div>
+
+    <div id="panel-sound" class="floating-panel sound-panel" data-panel="sound" style="display:none">
+      <div class="panel-header">Sound <span class="drag-handle">::</span><button class="panel-close">x</button></div>
+      <div class="panel-body">
+        <div class="snd-row">
+          <select id="snd-device" title="Loopback inputs capture what this PC is playing"></select>
+          <button id="snd-refresh" type="button" title="Rescan inputs">&#8635;</button>
+        </div>
+        <div class="snd-row">
+          <button id="snd-toggle" class="primary-btn" type="button">Start listening</button>
+          <span id="snd-status" class="hint"></span>
+        </div>
+        <div class="snd-meters">
+          <div class="meter"><span>Level</span><div class="bar"><i id="m-level"></i></div></div>
+          <div class="meter"><span>Bass</span><div class="bar"><i id="m-bass"></i></div></div>
+          <div class="meter"><span>Mid</span><div class="bar"><i id="m-mid"></i></div></div>
+          <div class="meter"><span>High</span><div class="bar"><i id="m-high"></i></div></div>
+        </div>
+        <div class="snd-row">
+          <span id="snd-beat-dot" class="beat-dot"></span>
+          <b id="snd-bpm">-- BPM</b>
+          <button id="snd-tap" type="button" title="Tap the beat; switches to tap tempo">Tap</button>
+          <select id="snd-source" title="Where beats come from">
+            <option value="audio">Beat: audio</option>
+            <option value="tap">Beat: tap tempo</option>
+          </select>
+        </div>
+        <label>Gain <span class="pct" id="snd-gain-val">1.0</span> <input type="range" id="snd-gain" min="0.2" max="4" step="0.1" value="1"></label>
+        <label>Beat sensitivity <span class="pct" id="snd-sens-val">1.0</span> <input type="range" id="snd-sens" min="0.2" max="3" step="0.1" value="1"></label>
+        <div class="snd-master">
+          <div class="hint">React to sound with:</div>
+          <div class="btn-row" id="snd-mode" role="group" aria-label="Sound-to-light mode">
+            <button type="button" data-mode="off">Off</button>
+            <button type="button" data-mode="color" title="Dimmer, strobe and color functions">Color</button>
+            <button type="button" data-mode="motion" title="Pan/tilt functions">Motion</button>
+            <button type="button" data-mode="both">Both</button>
+          </div>
+          <div class="hint">Color leaves movement to you or an animation; Motion leaves color alone.</div>
+        </div>
+        <hr>
+        <div id="snd-functions"></div>
+        <div class="snd-row">
+          <select id="snd-add-type"></select>
+          <button id="snd-add" type="button">+ Add function</button>
+        </div>
+        <div class="hint">New functions drive the current selection (or every fixture if nothing is selected).</div>
       </div>
     </div>
 

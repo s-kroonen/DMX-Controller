@@ -39,6 +39,10 @@ class Storage:
         return self.data_dir / "animations.json"
 
     @property
+    def audio_path(self) -> Path:
+        return self.data_dir / "audio.json"
+
+    @property
     def fixtures_dir(self) -> Path:
         return self.data_dir / "fixtures"
 
@@ -57,6 +61,18 @@ class Storage:
 
     def save_groups(self, groups: list[Group]) -> None:
         self.groups_path.write_text(json.dumps([g.to_dict() for g in groups], indent=2))
+
+    def load_audio(self) -> dict:
+        """Sound input + functions config; {} if none saved (or unreadable)."""
+        if self.audio_path.exists():
+            try:
+                return json.loads(self.audio_path.read_text())
+            except ValueError:
+                return {}
+        return {}
+
+    def save_audio(self, data: dict) -> None:
+        self.audio_path.write_text(json.dumps(data, indent=2))
 
     def load_animations(self) -> list[Animation]:
         if self.animations_path.exists():

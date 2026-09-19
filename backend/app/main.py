@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
 
 from .api.routes import router as api_router
+from .api.sound_routes import router as sound_router
 from .api.ws import broadcast_loop
 from .api.ws import router as ws_router
 from .context import get_context
@@ -53,6 +54,7 @@ async def key_error_handler(request: Request, exc: KeyError):
 
 
 app.include_router(api_router)
+app.include_router(sound_router)
 app.include_router(ws_router)
 
 if FRONTEND_DIR.exists():

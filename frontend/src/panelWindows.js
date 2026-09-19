@@ -11,6 +11,7 @@ const PANELS = [
   { id: "strobe", label: "Strobe / Shutter" },
   { id: "pantilt", label: "Pan / Tilt" },
   { id: "custom", label: "Custom Channels" },
+  { id: "sound", label: "Sound" },
 ];
 
 function prefKey(panelId) {
