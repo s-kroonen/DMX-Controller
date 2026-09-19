@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { state } from "./state.js";
 import { reloadRoomAndGroups } from "./main_data.js";
 
 const FUNCTIONS = [
@@ -27,19 +28,80 @@ export function initFixtureCreator() {
     grid.appendChild(label);
   }
 
+  document.getElementById("fc-existing-profile").onchange = onExistingProfileChange;
   document.getElementById("fc-add-custom").onclick = () => addCustomRow();
   document.getElementById("fc-submit").onclick = submitFixture;
   document.getElementById("fc-qxf-import").onclick = importQxf;
 }
 
 function openModal() {
+  refreshExistingProfileSelect();
   document.getElementById("modal-fixture-creator").classList.remove("hidden");
 }
 function closeModal() {
   document.getElementById("modal-fixture-creator").classList.add("hidden");
 }
 
-function addCustomRow() {
+// Profiles are otherwise add-only through this form -- POST /fixtures/
+// profiles already upserts by id, so editing an existing one (e.g. to fix
+// its pan/tilt mechanical range) just needs the form to load that
+// profile's data first and keep sending the same id on save.
+function refreshExistingProfileSelect() {
+  const select = document.getElementById("fc-existing-profile");
+  const previous = select.value;
+  select.innerHTML = '<option value="">New profile</option>';
+  for (const profile of state.profiles) {
+    const opt = document.createElement("option");
+    opt.value = profile.id;
+    opt.textContent = `${profile.name} (${profile.channel_count}ch)`;
+    select.appendChild(opt);
+  }
+  select.value = [...select.options].some((o) => o.value === previous) ? previous : "";
+}
+
+function onExistingProfileChange() {
+  const id = document.getElementById("fc-existing-profile").value;
+  if (!id) {
+    clearForm();
+    return;
+  }
+  const profile = state.profiles.find((p) => p.id === id);
+  if (profile) fillForm(profile);
+}
+
+function clearForm() {
+  document.getElementById("fc-name").value = "";
+  document.getElementById("fc-manufacturer").value = "";
+  document.getElementById("fc-mode").value = "";
+  document.getElementById("fc-type").value = "generic";
+  document.getElementById("fc-channel-count").value = 8;
+  document.getElementById("fc-pan-range").value = 540;
+  document.getElementById("fc-tilt-range").value = 270;
+  document.querySelectorAll("#fc-function-channels input").forEach((input) => { input.value = ""; });
+  document.getElementById("fc-custom-list").innerHTML = "";
+}
+
+function fillForm(profile) {
+  document.getElementById("fc-name").value = profile.name;
+  document.getElementById("fc-manufacturer").value = profile.manufacturer || "";
+  document.getElementById("fc-mode").value = profile.mode || "";
+  document.getElementById("fc-type").value = profile.fixture_type || "generic";
+  document.getElementById("fc-channel-count").value = profile.channel_count;
+  document.getElementById("fc-pan-range").value = profile.pan_range_deg ?? 540;
+  document.getElementById("fc-tilt-range").value = profile.tilt_range_deg ?? 270;
+
+  document.querySelectorAll("#fc-function-channels input").forEach((input) => {
+    const value = (profile.channels || {})[input.dataset.role];
+    input.value = value === undefined ? "" : value;
+  });
+
+  document.getElementById("fc-custom-list").innerHTML = "";
+  for (const custom of profile.custom_channels || []) {
+    addCustomRow(custom);
+  }
+}
+
+function addCustomRow(existing) {
   customRowCount += 1;
   const container = document.getElementById("fc-custom-list");
   const row = document.createElement("div");
@@ -50,6 +112,11 @@ function addCustomRow() {
     <input type="number" placeholder="Default" class="custom-channel-default" value="0">
     <button type="button" class="custom-channel-remove">x</button>
   `;
+  if (existing) {
+    row.querySelector(".custom-channel-num").value = existing.channel;
+    row.querySelector(".custom-channel-label").value = existing.label;
+    row.querySelector(".custom-channel-default").value = existing.default;
+  }
   row.querySelector(".custom-channel-remove").onclick = () => row.remove();
   container.appendChild(row);
 }
@@ -75,7 +142,9 @@ function collectFunctionChannels() {
 }
 
 async function submitFixture() {
+  const existingId = document.getElementById("fc-existing-profile").value || undefined;
   const payload = {
+    id: existingId,
     name: document.getElementById("fc-name").value || "Custom Fixture",
     manufacturer: document.getElementById("fc-manufacturer").value,
     mode: document.getElementById("fc-mode").value,
@@ -87,8 +156,10 @@ async function submitFixture() {
     tilt_range_deg: Number(document.getElementById("fc-tilt-range").value),
     defaults: {},
   };
-  await api.saveProfile(payload);
+  const saved = await api.saveProfile(payload);
   await reloadRoomAndGroups();
+  refreshExistingProfileSelect();
+  document.getElementById("fc-existing-profile").value = saved.id;
   alert(`Saved fixture profile "${payload.name}". It's now available in Patch.`);
 }
 

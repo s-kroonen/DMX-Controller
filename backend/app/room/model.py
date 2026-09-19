@@ -50,6 +50,12 @@ class FixtureInstance:
     group_ids: list[str] = dataclasses.field(default_factory=list)
     inverted_pan: bool = False
     inverted_tilt: bool = False
+    # Fine calibration trim, separate from the mounting orientation: use
+    # this when the fixture's own mechanical zero doesn't quite line up
+    # with reality (e.g. it's a couple degrees off pan-center) rather than
+    # re-deriving the whole mounting yaw/pitch to compensate.
+    pan_offset_deg: float = 0.0
+    tilt_offset_deg: float = 0.0
 
     def channel_for(self, offset: int) -> int:
         """offset is 1-indexed within the fixture's own footprint."""
@@ -67,6 +73,8 @@ class FixtureInstance:
             "group_ids": self.group_ids,
             "inverted_pan": self.inverted_pan,
             "inverted_tilt": self.inverted_tilt,
+            "pan_offset_deg": self.pan_offset_deg,
+            "tilt_offset_deg": self.tilt_offset_deg,
         }
 
     @staticmethod
@@ -82,6 +90,8 @@ class FixtureInstance:
             group_ids=d.get("group_ids", []),
             inverted_pan=d.get("inverted_pan", False),
             inverted_tilt=d.get("inverted_tilt", False),
+            pan_offset_deg=d.get("pan_offset_deg", 0.0),
+            tilt_offset_deg=d.get("tilt_offset_deg", 0.0),
         )
 
 
@@ -273,6 +283,22 @@ class Room:
         for zone in self.safety_zones.values():
             rescale(zone.min_corner)
             rescale(zone.max_corner)
+
+    def clamp_position(self, position: Vec3) -> Vec3:
+        """Keep a point inside the room's actual floor footprint and
+        height -- a fixture (or object) placed outside walls the show
+        doesn't physically have is a mistake the software should catch,
+        not send to hardware. Clamped to the floor polygon's bounding box
+        (not the exact polygon -- close enough to catch "way outside the
+        room" without a full point-in-polygon projection) and [0, height]
+        vertically.
+        """
+        min_x, max_x, min_y, max_y = _bounds(self.effective_floor_points())
+        return Vec3(
+            x=max(min_x, min(max_x, position.x)),
+            y=max(min_y, min(max_y, position.y)),
+            z=max(0.0, min(self.dimensions.height, position.z)),
+        )
 
     def add_fixture(self, fixture: FixtureInstance) -> None:
         self.fixtures[fixture.id] = fixture

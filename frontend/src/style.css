@@ -101,6 +101,10 @@ button:hover { filter: brightness(1.15); }
 #fixture-details-body legend { font-size: 0.8em; color: var(--text-dim); }
 #fixture-details-body .btn-row button { padding: 6px; }
 
+.subtab-bar { display: flex; gap: 4px; margin-bottom: 8px; }
+.subtab-btn { flex: 1; font-size: 0.75em; padding: 5px 4px; background: #14161a; }
+.subtab-btn.active { background: var(--accent); border-color: var(--accent); }
+
 .button-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 .select-btn {
   padding: 8px 10px;

@@ -179,6 +179,8 @@ class FixtureInstanceIn(BaseModel):
     group_ids: list[str] = []
     inverted_pan: bool = False
     inverted_tilt: bool = False
+    pan_offset_deg: float = 0.0
+    tilt_offset_deg: float = 0.0
 
 
 @router.post("/room/fixtures")
@@ -193,11 +195,13 @@ def add_fixture(payload: FixtureInstanceIn):
         profile_id=payload.profile_id,
         universe=payload.universe,
         start_address=payload.start_address,
-        position=Vec3(**payload.position.model_dump()),
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
         orientation=Orientation(**payload.orientation.model_dump()),
         group_ids=payload.group_ids,
         inverted_pan=payload.inverted_pan,
         inverted_tilt=payload.inverted_tilt,
+        pan_offset_deg=payload.pan_offset_deg,
+        tilt_offset_deg=payload.tilt_offset_deg,
     )
     ctx.engine.add_fixture(instance)
     ctx.persist_room()
@@ -215,11 +219,13 @@ def update_fixture(fixture_id: str, payload: FixtureInstanceIn):
         profile_id=payload.profile_id,
         universe=payload.universe,
         start_address=payload.start_address,
-        position=Vec3(**payload.position.model_dump()),
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
         orientation=Orientation(**payload.orientation.model_dump()),
         group_ids=payload.group_ids,
         inverted_pan=payload.inverted_pan,
         inverted_tilt=payload.inverted_tilt,
+        pan_offset_deg=payload.pan_offset_deg,
+        tilt_offset_deg=payload.tilt_offset_deg,
     )
     ctx.engine.room.fixtures[fixture_id] = instance
     ctx.persist_room()
@@ -294,8 +300,8 @@ def add_room_object(payload: RoomObjectIn):
         id=object_id,
         name=payload.name,
         kind=payload.kind,
-        position=Vec3(**payload.position.model_dump()),
-        end_position=Vec3(**payload.end_position.model_dump()) if payload.end_position else None,
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
+        end_position=ctx.engine.room.clamp_position(Vec3(**payload.end_position.model_dump())) if payload.end_position else None,
         thickness=payload.thickness,
         width=payload.width,
         depth=payload.depth,
@@ -318,8 +324,8 @@ def update_room_object(object_id: str, payload: RoomObjectIn):
         id=object_id,
         name=payload.name,
         kind=payload.kind,
-        position=Vec3(**payload.position.model_dump()),
-        end_position=Vec3(**payload.end_position.model_dump()) if payload.end_position else None,
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
+        end_position=ctx.engine.room.clamp_position(Vec3(**payload.end_position.model_dump())) if payload.end_position else None,
         thickness=payload.thickness,
         width=payload.width,
         depth=payload.depth,

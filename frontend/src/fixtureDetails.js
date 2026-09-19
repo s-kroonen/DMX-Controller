@@ -21,8 +21,21 @@ export function initFixtureDetailsPanel() {
   document.getElementById("fd-save").onclick = saveFixture;
   document.getElementById("fd-delete").onclick = deleteFixture;
 
+  for (const btn of document.querySelectorAll(".subtab-btn")) {
+    btn.onclick = () => setActiveSubtab(btn.dataset.subtab);
+  }
+
   refreshProfileSelect();
   applyCollapsed(loadPref(COLLAPSED_PREF_KEY, false));
+}
+
+function setActiveSubtab(name) {
+  for (const btn of document.querySelectorAll(".subtab-btn")) {
+    btn.classList.toggle("active", btn.dataset.subtab === name);
+  }
+  for (const pane of document.querySelectorAll(".subtab-pane")) {
+    pane.classList.toggle("hidden", pane.dataset.subtabPane !== name);
+  }
 }
 
 function isCollapsed() {
@@ -103,6 +116,8 @@ function fillForm(fixture) {
   document.getElementById("fd-pitch").value = fixture.orientation.pitch_deg;
   document.getElementById("fd-invert-pan").checked = fixture.inverted_pan;
   document.getElementById("fd-invert-tilt").checked = fixture.inverted_tilt;
+  document.getElementById("fd-pan-offset").value = fixture.pan_offset_deg || 0;
+  document.getElementById("fd-tilt-offset").value = fixture.tilt_offset_deg || 0;
 }
 
 // Group membership actually lives on Group.fixture_ids (the group is the
@@ -155,6 +170,8 @@ async function saveFixture() {
     },
     inverted_pan: document.getElementById("fd-invert-pan").checked,
     inverted_tilt: document.getElementById("fd-invert-tilt").checked,
+    pan_offset_deg: Number(document.getElementById("fd-pan-offset").value) || 0,
+    tilt_offset_deg: Number(document.getElementById("fd-tilt-offset").value) || 0,
   };
   await api.updateFixture(fixture.id, payload);
   await reloadRoomAndGroups();

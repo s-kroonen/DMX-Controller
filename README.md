@@ -111,11 +111,23 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   mounting orientation, and `compute_pan_tilt()` -- a pure, unit-tested
   function that turns a 3D target point into pan/tilt DMX values (with
   fine-channel sub-degree resolution across the fixture's full measured
-  mechanical range).
+  mechanical range). A fixture profile's pan/tilt range isn't assumed to be
+  360 -- it defaults to 540/270 and is set per-profile in the Fixture
+  Creator (which can also load and edit an existing profile now, not just
+  create new ones), so a fixture that physically pans further than a full
+  turn maps its whole real range across 0-255 instead of wrapping early. A
+  per-fixture pan/tilt calibration trim (`pan_offset_deg`/`tilt_offset_deg`,
+  in the Details panel's General tab) corrects a fixture whose own
+  mechanical zero is a little off, without having to re-derive its mounting
+  yaw/pitch to compensate.
 - **Safety zones**: axis-aligned no-go volumes. Every computed aim is
   checked against a ray/box intersection before it reaches hardware, and
   blocked (with the reason surfaced to the UI) instead of just clamped to
-  a pan/tilt range like consumer software.
+  a pan/tilt range like consumer software. Fixture and room-object
+  positions are also clamped to the room's actual floor footprint and
+  height on every save (`Room.clamp_position()`) -- a fixture living
+  outside the walls the show doesn't have isn't a position the software
+  should let you send to hardware.
 - **Show engine + groups** (`app/show/engine.py`, `app/groups/`): the live
   state for controlling one fixture or a whole group at once -- color,
   dimmer, strobe/shutter, raw pan/tilt, custom-channel sliders, and 3D
@@ -166,19 +178,27 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
     the scene (or via the sidebar) or a room object (person/box/surface --
     walls need two points, so they're not draggable this way) to attach a
     drag gizmo (XYZ arrows, like a 3D-slicer/CAD tool) and reposition it;
-    the new position saves once you release. A Move/Rotate toggle over the
-    3D view switches the gizmo to a rotation ring for a selected fixture's
-    yaw (room objects have no orientation, so Rotate is disabled/skipped
-    for them). Multi-select and group selections don't get a gizmo
-    (there's no single position to drag). Room shape and safety zones are
-    never edited here -- see above for why.
+    the new position saves once you release (clamped into the room's actual
+    footprint/height, same as every other write path). A Move/Yaw/Pitch
+    toggle over the 3D view switches the gizmo between position and the two
+    independent mounting-angle rings for a selected fixture: Yaw always
+    rotates around world-vertical, Pitch rotates around the fixture's own
+    (already-yawed) horizontal axis -- two separate rings rather than one
+    combined one, since a single ring can only ever drive one axis, and two
+    nested nodes keep the two rotations from tangling into each other.
+    Room objects have no orientation, so Yaw/Pitch are disabled for them.
+    Multi-select and group selections don't get a gizmo (there's no single
+    position to drag). Room shape and safety zones are never edited here --
+    see above for why.
   - The **Details** panel, under the fixture list in the sidebar (not a
     popup like everything else), loads the currently selected fixture's
-    full data -- name/profile/patch address, position, mounting yaw/pitch,
-    pan/tilt inversion, and group membership checkboxes -- for editing or
-    deleting that one fixture. It's collapsible, and whether it's
-    collapsed persists across a refresh (localStorage, like the floating
-    panels). The Patch screen stays add-only.
+    full data across three sub-tabs -- **Position** (X/Y/Z, mounting
+    yaw/pitch), **General** (name/profile/patch address, pan/tilt
+    inversion, and a pan/tilt calibration offset trim), and **Groups**
+    (membership checkboxes) -- for editing or deleting that one fixture.
+    It's collapsible, and whether it's collapsed persists across a refresh
+    (localStorage, like the floating panels). The Patch screen stays
+    add-only.
   - Fixtures render with a model shaped for their `fixture_type` --
     moving head (base/yoke/head), smoke machine (box + nozzle), PAR can
     (cylinder), or a plain box for anything else -- with a bright green

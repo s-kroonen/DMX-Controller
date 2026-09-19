@@ -102,6 +102,25 @@ def test_apply_shape_no_op_when_shape_unchanged():
     assert room.fixtures["f1"].position.z == 1.5
 
 
+def test_clamp_position_keeps_point_inside_room_bounds():
+    room = Room(dimensions=RoomDimensions(width=10, depth=6, height=4))
+    clamped = room.clamp_position(Vec3(100, -100, 50))
+    assert clamped.x == 5 and clamped.y == -3 and clamped.z == 4
+    assert clamped is not None
+
+
+def test_clamp_position_leaves_in_bounds_point_untouched():
+    room = Room(dimensions=RoomDimensions(width=10, depth=6, height=4))
+    clamped = room.clamp_position(Vec3(1, -1, 2))
+    assert clamped.x == 1 and clamped.y == -1 and clamped.z == 2
+
+
+def test_clamp_position_rejects_negative_height():
+    room = Room(dimensions=RoomDimensions(width=10, depth=6, height=4))
+    clamped = room.clamp_position(Vec3(0, 0, -5))
+    assert clamped.z == 0
+
+
 def test_apply_shape_recenters_when_floor_points_move_off_center():
     room = Room()
     room.floor_points = [Vec2(0, 0), Vec2(10, 0), Vec2(10, 10), Vec2(0, 10)]
