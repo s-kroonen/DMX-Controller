@@ -14,7 +14,7 @@ import { reloadRoomAndGroups } from "./main_data.js";
 // canvas just maps a fixed pixels-per-meter scale around a center origin.
 
 const PX_PER_METER = 20;
-const HIT_RADIUS_PX = 10;
+const HIT_RADIUS_PX = 14;
 let points = []; // [{x, y}] in meters
 let draggingIndex = null;
 let mouseDownPos = null;
@@ -29,10 +29,17 @@ export function initRoomShapeModal() {
     const { px, py } = eventToPixels(canvas, evt);
     mouseDownPos = { px, py };
     draggingIndex = hitTestPoint(px, py);
+    canvas.style.cursor = draggingIndex !== null ? "grabbing" : "crosshair";
   });
 
   window.addEventListener("mousemove", (evt) => {
-    if (draggingIndex === null) return;
+    if (draggingIndex === null) {
+      // hover feedback: show a grab cursor over a draggable corner
+      if (document.getElementById("modal-room-shape").classList.contains("hidden")) return;
+      const { px, py } = eventToPixels(canvas, evt);
+      canvas.style.cursor = hitTestPoint(px, py) !== null ? "grab" : "crosshair";
+      return;
+    }
     const { px, py } = eventToPixels(canvas, evt);
     points[draggingIndex] = pixelsToMeters(px, py);
     redraw();
@@ -42,6 +49,7 @@ export function initRoomShapeModal() {
     if (draggingIndex !== null) {
       draggingIndex = null;
       mouseDownPos = null;
+      canvas.style.cursor = "crosshair";
       return;
     }
     if (!mouseDownPos) return;
@@ -65,9 +73,20 @@ export function initRoomShapeModal() {
   document.getElementById("rs-save").onclick = submitRoomShape;
 }
 
+// Convert a mouse event to canvas-*internal* pixel coordinates. The
+// canvas is drawn at its `width`/`height` attribute resolution, but its
+// on-screen CSS box can differ slightly (e.g. a 1px border on each side
+// makes getBoundingClientRect() a couple of pixels bigger than the
+// drawing buffer) -- scaling by the ratio keeps hit-testing and dragging
+// accurate instead of drifting off by a few pixels.
 function eventToPixels(canvas, evt) {
   const rect = canvas.getBoundingClientRect();
-  return { px: evt.clientX - rect.left, py: evt.clientY - rect.top };
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    px: (evt.clientX - rect.left) * scaleX,
+    py: (evt.clientY - rect.top) * scaleY,
+  };
 }
 
 function pixelsToMeters(px, py) {
