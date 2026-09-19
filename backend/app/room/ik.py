@@ -97,6 +97,8 @@ def compute_pan_tilt(
     tilt_range_deg: float,
     inverted_pan: bool = False,
     inverted_tilt: bool = False,
+    pan_offset_deg: float = 0.0,
+    tilt_offset_deg: float = 0.0,
 ) -> PanTiltResult:
     """Compute DMX pan/tilt values (with fine-channel resolution) that
     aim `fixture` at `target_point` in room space.
@@ -104,6 +106,11 @@ def compute_pan_tilt(
     Uses the fixture's full measured mechanical range (e.g. 540 degrees)
     for sub-degree resolution via the fine channel, rather than the
     coarse-only 8-bit mapping FreeStyler's FX generator uses.
+
+    pan_offset_deg/tilt_offset_deg are a fine calibration trim -- applied
+    after inversion, on top of the mounting orientation -- for a fixture
+    whose own mechanical zero is a little off from where the mounting
+    orientation says it should be, without having to re-derive yaw/pitch.
     """
     pan_angle, tilt_angle, _direction = beam_direction(
         fixture_position, fixture_orientation, target_point
@@ -112,6 +119,8 @@ def compute_pan_tilt(
         pan_angle = -pan_angle
     if inverted_tilt:
         tilt_angle = -tilt_angle
+    pan_angle += pan_offset_deg
+    tilt_angle += tilt_offset_deg
 
     pan_coarse, pan_fine, pan_in_range = _angle_to_dmx(pan_angle, pan_range_deg)
     tilt_coarse, tilt_fine, tilt_in_range = _angle_to_dmx(tilt_angle, tilt_range_deg)

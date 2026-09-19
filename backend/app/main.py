@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from .api.routes import router as api_router
 from .api.ws import broadcast_loop
@@ -14,6 +15,24 @@ from .api.ws import router as ws_router
 from .context import get_context
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Plain StaticFiles lets browsers cache the JS modules from disk
+    indefinitely with no explicit Cache-Control header, which has bitten
+    us before: pull a frontend change, reload, and the browser silently
+    keeps serving the old file (old behavior with none of the fix) until
+    a hard refresh. This is a single-venue local app, not something
+    served at scale, so trading away that caching for "changes always
+    take effect on a normal reload" is the right call. `no-cache` still
+    lets the browser keep a copy but forces a revalidation request (via
+    ETag/Last-Modified) every time -- cheap on localhost, and correct.
+    """
+
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 @asynccontextmanager
@@ -37,4 +56,4 @@ app.include_router(api_router)
 app.include_router(ws_router)
 
 if FRONTEND_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+    app.mount("/", NoCacheStaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

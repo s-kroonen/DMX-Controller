@@ -69,7 +69,9 @@ function renderPatchList() {
     const row = document.createElement("div");
     row.className = "patch-row";
     const profile = state.profileById(fixture.profile_id);
-    row.innerHTML = `<span>${fixture.name} — ${profile ? profile.name : fixture.profile_id} @${fixture.start_address}</span>`;
+    const span = document.createElement("span");
+    span.textContent = `${fixture.name} — ${profile ? profile.name : fixture.profile_id} @${fixture.start_address}`;
+    row.appendChild(span);
     const del = document.createElement("button");
     del.textContent = "Delete";
     del.onclick = async () => {

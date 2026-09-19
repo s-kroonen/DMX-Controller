@@ -50,6 +50,12 @@ class FixtureInstance:
     group_ids: list[str] = dataclasses.field(default_factory=list)
     inverted_pan: bool = False
     inverted_tilt: bool = False
+    # Fine calibration trim, separate from the mounting orientation: use
+    # this when the fixture's own mechanical zero doesn't quite line up
+    # with reality (e.g. it's a couple degrees off pan-center) rather than
+    # re-deriving the whole mounting yaw/pitch to compensate.
+    pan_offset_deg: float = 0.0
+    tilt_offset_deg: float = 0.0
 
     def channel_for(self, offset: int) -> int:
         """offset is 1-indexed within the fixture's own footprint."""
@@ -67,6 +73,8 @@ class FixtureInstance:
             "group_ids": self.group_ids,
             "inverted_pan": self.inverted_pan,
             "inverted_tilt": self.inverted_tilt,
+            "pan_offset_deg": self.pan_offset_deg,
+            "tilt_offset_deg": self.tilt_offset_deg,
         }
 
     @staticmethod
@@ -82,6 +90,8 @@ class FixtureInstance:
             group_ids=d.get("group_ids", []),
             inverted_pan=d.get("inverted_pan", False),
             inverted_tilt=d.get("inverted_tilt", False),
+            pan_offset_deg=d.get("pan_offset_deg", 0.0),
+            tilt_offset_deg=d.get("tilt_offset_deg", 0.0),
         )
 
 
@@ -90,6 +100,12 @@ class RoomDimensions:
     width: float = 10.0  # meters, X axis -- used only as a fallback rectangle
     depth: float = 10.0  # meters, Y axis    when Room.floor_points is empty
     height: float = 4.0  # meters, Z axis (up) -- ceiling height either way
+
+
+def _bounds(points: list[Vec2]) -> tuple[float, float, float, float]:
+    xs = [p.x for p in points]
+    ys = [p.y for p in points]
+    return min(xs), max(xs), min(ys), max(ys)
 
 
 def default_rectangle_floor(dimensions: RoomDimensions) -> list[Vec2]:
@@ -211,6 +227,78 @@ class Room:
         if len(self.floor_points) >= 3:
             return self.floor_points
         return default_rectangle_floor(self.dimensions)
+
+    def apply_shape(self, floor_points: list[Vec2], dimensions: RoomDimensions) -> None:
+        """Replace the room's floor plan and ceiling height. The room shape
+        is only ever redrawn from the 2D editor (never dragged directly in
+        the 3D view, which is for fixtures/objects only -- editing the room
+        itself is a bigger, more consequential action that can invalidate
+        where things are). Fixtures, objects, and safety zones are defined
+        relative to the room, so when its footprint or height changes they
+        are rescaled proportionally (anchored on the floor's center) to
+        keep their relative placement instead of ending up outside the new
+        walls or floating at the wrong height.
+        """
+        old_points = self.effective_floor_points()
+        old_min_x, old_max_x, old_min_y, old_max_y = _bounds(old_points)
+        old_width, old_depth = old_max_x - old_min_x, old_max_y - old_min_y
+        old_height = self.dimensions.height
+        old_center_x, old_center_y = (old_min_x + old_max_x) / 2, (old_min_y + old_max_y) / 2
+
+        self.floor_points = floor_points
+        self.dimensions = dimensions
+
+        new_points = self.effective_floor_points()
+        new_min_x, new_max_x, new_min_y, new_max_y = _bounds(new_points)
+        new_width, new_depth = new_max_x - new_min_x, new_max_y - new_min_y
+        new_height = self.dimensions.height
+        new_center_x, new_center_y = (new_min_x + new_max_x) / 2, (new_min_y + new_max_y) / 2
+
+        if old_width < 1e-9 or old_depth < 1e-9 or old_height < 1e-9:
+            return  # degenerate previous shape -- nothing sensible to scale from
+        if (
+            abs(old_width - new_width) < 1e-9
+            and abs(old_depth - new_depth) < 1e-9
+            and abs(old_height - new_height) < 1e-9
+            and abs(old_center_x - new_center_x) < 1e-9
+            and abs(old_center_y - new_center_y) < 1e-9
+        ):
+            return  # shape didn't actually change -- avoid pointless float drift
+
+        scale_x = new_width / old_width
+        scale_y = new_depth / old_depth
+        scale_z = new_height / old_height
+
+        def rescale(point: Vec3) -> None:
+            point.x = new_center_x + (point.x - old_center_x) * scale_x
+            point.y = new_center_y + (point.y - old_center_y) * scale_y
+            point.z = point.z * scale_z
+
+        for fixture in self.fixtures.values():
+            rescale(fixture.position)
+        for obj in self.objects.values():
+            rescale(obj.position)
+            if obj.end_position is not None:
+                rescale(obj.end_position)
+        for zone in self.safety_zones.values():
+            rescale(zone.min_corner)
+            rescale(zone.max_corner)
+
+    def clamp_position(self, position: Vec3) -> Vec3:
+        """Keep a point inside the room's actual floor footprint and
+        height -- a fixture (or object) placed outside walls the show
+        doesn't physically have is a mistake the software should catch,
+        not send to hardware. Clamped to the floor polygon's bounding box
+        (not the exact polygon -- close enough to catch "way outside the
+        room" without a full point-in-polygon projection) and [0, height]
+        vertically.
+        """
+        min_x, max_x, min_y, max_y = _bounds(self.effective_floor_points())
+        return Vec3(
+            x=max(min_x, min(max_x, position.x)),
+            y=max(min_y, min(max_y, position.y)),
+            z=max(0.0, min(self.dimensions.height, position.z)),
+        )
 
     def add_fixture(self, fixture: FixtureInstance) -> None:
         self.fixtures[fixture.id] = fixture

@@ -285,6 +285,8 @@ class ShowEngine:
                 tilt_range_deg=profile.tilt_range_deg or 270.0,
                 inverted_pan=instance.inverted_pan,
                 inverted_tilt=instance.inverted_tilt,
+                pan_offset_deg=instance.pan_offset_deg,
+                tilt_offset_deg=instance.tilt_offset_deg,
             )
             self.set_role_value(fid, "pan", ik_result.pan_dmx)
             self.set_role_value(fid, "pan_fine", ik_result.pan_fine_dmx)

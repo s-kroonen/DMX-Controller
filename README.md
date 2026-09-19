@@ -101,7 +101,8 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
 - **Fixture profile system** (`app/fixtures/`): JSON fixture-type
   definitions (channel map, pan/tilt range, custom/unmapped channels),
   bundled profiles for a generic 16ch moving head, the Beamz MHL108 MKII,
-  a 4ch RGB PAR, and a generic laser, plus a QLC+ `.qxf` importer so you
+  a 4ch RGB PAR, a generic laser, and a 2ch smoke machine, plus a QLC+
+  `.qxf` importer so you
   can pull in fixtures from their community library instead of hand-typing
   every channel map. The in-app **Fixture Creator** lets you define new
   fixture types (including custom sliders that don't map to any built-in
@@ -110,11 +111,23 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   mounting orientation, and `compute_pan_tilt()` -- a pure, unit-tested
   function that turns a 3D target point into pan/tilt DMX values (with
   fine-channel sub-degree resolution across the fixture's full measured
-  mechanical range).
+  mechanical range). A fixture profile's pan/tilt range isn't assumed to be
+  360 -- it defaults to 540/270 and is set per-profile in the Fixture
+  Creator (which can also load and edit an existing profile now, not just
+  create new ones), so a fixture that physically pans further than a full
+  turn maps its whole real range across 0-255 instead of wrapping early. A
+  per-fixture pan/tilt calibration trim (`pan_offset_deg`/`tilt_offset_deg`,
+  in the Details panel's General tab) corrects a fixture whose own
+  mechanical zero is a little off, without having to re-derive its mounting
+  yaw/pitch to compensate.
 - **Safety zones**: axis-aligned no-go volumes. Every computed aim is
   checked against a ray/box intersection before it reaches hardware, and
   blocked (with the reason surfaced to the UI) instead of just clamped to
-  a pan/tilt range like consumer software.
+  a pan/tilt range like consumer software. Fixture and room-object
+  positions are also clamped to the room's actual floor footprint and
+  height on every save (`Room.clamp_position()`) -- a fixture living
+  outside the walls the show doesn't have isn't a position the software
+  should let you send to hardware.
 - **Show engine + groups** (`app/show/engine.py`, `app/groups/`): the live
   state for controlling one fixture or a whole group at once -- color,
   dimmer, strobe/shutter, raw pan/tilt, custom-channel sliders, and 3D
@@ -136,13 +149,22 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   keyframing raw pan/tilt directly.
 - **Room shape + objects** (`app/room/model.py`): a room is rarely a
   perfect rectangle, so `Room.floor_points` holds an arbitrary polygon
-  (any number of sides, drawn as a 2D floor plan in the **Room Shape**
-  editor) extruded up to a ceiling height for the 3D view; it falls back
-  to a simple width/depth rectangle until a shape is drawn. The
-  **Objects** editor adds visual/spatial reference objects into the scene
-  -- wall segments, person-scale markers (for a sense of scale), box
-  obstacles, and raised surfaces/platforms. These are purely visual
-  reference, unlike Safety Zones, which actually block beams.
+  (any number of sides, drawn -- and redrawn -- as a 2D floor plan in the
+  **Room Shape** editor, where you can click empty space to add a corner
+  or drag an existing one to move it) extruded up to a ceiling height for
+  the 3D view; it falls back to a simple width/depth rectangle until a
+  shape is drawn. Editing the room's shape is deliberately confined to
+  that 2D editor and never done in the 3D view: it's a bigger,
+  consequential action (it can move everything relative to it), so
+  `Room.apply_shape()` rescales every fixture, object, and safety zone
+  proportionally on save -- anchored on the floor's center -- so they
+  keep their relative placement instead of ending up outside the new
+  walls or floating at the wrong height. The **Objects** editor adds
+  visual/spatial reference objects into the scene -- wall segments,
+  person-scale markers (for a sense of scale), box obstacles, and raised
+  surfaces/platforms. These are purely visual reference, unlike Safety
+  Zones, which actually block beams; both are edited only through their
+  own modals for the same reason as the room shape.
 - **Web UI** (`frontend/`): draggable, overlaid RGB / strobe-shutter /
   pan-tilt / custom-channel control windows that all apply live to
   whatever fixture(s) or group is currently selected; a Three.js 3D scene
@@ -152,11 +174,38 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   a safety zone editor; and a keyframe animation editor. Three.js is
   vendored locally (`frontend/vendor/three/`) so the controller runs with
   no internet access at the venue.
-  - Selecting exactly one fixture attaches a drag gizmo (XYZ arrows, like
-    a 3D-slicer/CAD tool) directly on it in the 3D view -- drag an axis
-    to reposition the fixture in room space; the new position is saved
-    once you release. Multi-select and group selections don't get a
-    gizmo (there's no single position to drag).
+  - The 3D view is fixtures/objects only -- click a fixture directly in
+    the scene (or via the sidebar) or a room object (person/box/surface --
+    walls need two points, so they're not draggable this way) to attach a
+    drag gizmo (XYZ arrows, like a 3D-slicer/CAD tool) and reposition it;
+    the new position saves once you release (clamped into the room's actual
+    footprint/height, same as every other write path). A Move/Yaw/Pitch
+    toggle over the 3D view switches the gizmo between position and the two
+    independent mounting-angle rings for a selected fixture: Yaw always
+    rotates around world-vertical, Pitch rotates around the fixture's own
+    (already-yawed) horizontal axis -- two separate rings rather than one
+    combined one, since a single ring can only ever drive one axis, and two
+    nested nodes keep the two rotations from tangling into each other.
+    Room objects have no orientation, so Yaw/Pitch are disabled for them.
+    Multi-select and group selections don't get a gizmo (there's no single
+    position to drag). Room shape and safety zones are never edited here --
+    see above for why.
+  - The **Details** panel, under the fixture list in the sidebar (not a
+    popup like everything else), loads the currently selected fixture's
+    full data across three sub-tabs -- **Position** (X/Y/Z, mounting
+    yaw/pitch), **General** (name/profile/patch address, pan/tilt
+    inversion, and a pan/tilt calibration offset trim), and **Groups**
+    (membership checkboxes) -- for editing or deleting that one fixture.
+    It's collapsible, and whether it's collapsed persists across a refresh
+    (localStorage, like the floating panels). The Patch screen stays
+    add-only.
+  - Fixtures render with a model shaped for their `fixture_type` --
+    moving head (base/yoke/head), smoke machine (box + nozzle), PAR can
+    (cylinder), or a plain box for anything else -- with a bright green
+    arrow on every fixture showing exactly which way it's calibrated to
+    call pan/tilt zero (its mounting `orientation.yaw_deg`), so a
+    miscalibrated "front" is obvious at a glance instead of hidden inside
+    a featureless ball.
   - Each floating control window remembers whether it's open/closed and
     where you left it (localStorage, per browser) across a page refresh.
     A closed window is never stranded -- the **Windows** menu in the top

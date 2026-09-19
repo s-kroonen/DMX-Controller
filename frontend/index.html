@@ -45,6 +45,66 @@
           <h3>Fixtures</h3>
           <div id="fixture-buttons" class="button-grid"></div>
         </div>
+        <div class="sidebar-section" id="fixture-details-section">
+          <h3 id="fixture-details-toggle" class="collapsible-header">
+            Details <span id="fixture-details-caret">&#9662;</span>
+          </h3>
+          <div id="fixture-details-body">
+            <div id="fixture-details-empty" class="hint">Select a single fixture to edit its details.</div>
+            <div id="fixture-details-form" class="hidden">
+              <div class="subtab-bar">
+                <button type="button" class="subtab-btn active" data-subtab="position">Position</button>
+                <button type="button" class="subtab-btn" data-subtab="general">General</button>
+                <button type="button" class="subtab-btn" data-subtab="groups">Groups</button>
+              </div>
+
+              <div class="subtab-pane" data-subtab-pane="position">
+                <fieldset>
+                  <legend>Position (meters)</legend>
+                  <label>X <input id="fd-x" type="number" step="0.1"></label>
+                  <label>Y <input id="fd-y" type="number" step="0.1"></label>
+                  <label>Z <input id="fd-z" type="number" step="0.1"></label>
+                </fieldset>
+                <fieldset>
+                  <legend>Mounting orientation (degrees)</legend>
+                  <label>Yaw <input id="fd-yaw" type="number" step="1"></label>
+                  <label>Pitch <input id="fd-pitch" type="number" step="1"></label>
+                  <label>Roll <input id="fd-roll" type="number" step="1"></label>
+                </fieldset>
+              </div>
+
+              <div class="subtab-pane hidden" data-subtab-pane="general">
+                <label>Name <input id="fd-name" type="text"></label>
+                <label>Profile
+                  <select id="fd-profile"></select>
+                </label>
+                <label>Universe <input id="fd-universe" type="number" min="1"></label>
+                <label>Start address <input id="fd-address" type="number" min="1" max="512"></label>
+                <label><input id="fd-invert-pan" type="checkbox"> Invert pan</label>
+                <label><input id="fd-invert-tilt" type="checkbox"> Invert tilt</label>
+                <fieldset>
+                  <legend>Calibration trim (degrees) -- if pan/tilt don't quite line up</legend>
+                  <label>Pan offset <input id="fd-pan-offset" type="number" step="0.5"></label>
+                  <label>Tilt offset <input id="fd-tilt-offset" type="number" step="0.5"></label>
+                </fieldset>
+                <fieldset>
+                  <legend>Pan/tilt mechanical range (degrees) -- shared by this fixture type</legend>
+                  <label>Pan range <input id="fd-pan-range" type="number" step="1"></label>
+                  <label>Tilt range <input id="fd-tilt-range" type="number" step="1"></label>
+                </fieldset>
+              </div>
+
+              <div class="subtab-pane hidden" data-subtab-pane="groups">
+                <div id="fd-groups"></div>
+              </div>
+
+              <div class="btn-row">
+                <button id="fd-save" type="button" class="primary-btn">Save</button>
+                <button id="fd-delete" type="button" class="danger-btn">Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="sidebar-section" id="selection-summary">
           <h3>Selection</h3>
           <div id="selection-text">Nothing selected</div>
@@ -53,6 +113,12 @@
 
       <main id="stage">
         <div id="scene-container"></div>
+        <div id="gizmo-toolbar" class="gizmo-toolbar">
+          <button id="gizmo-mode-translate" class="toggle-btn active" title="Move (drag XYZ arrows)">Move</button>
+          <button id="gizmo-mode-yaw" class="toggle-btn" title="Yaw (drag ring around vertical axis) -- fixtures only">Yaw</button>
+          <button id="gizmo-mode-pitch" class="toggle-btn" title="Pitch (drag ring around fixture's own horizontal axis) -- fixtures only">Pitch</button>
+          <button id="gizmo-mode-roll" class="toggle-btn" title="Roll (drag ring around fixture's own front/aim axis) -- fixtures only">Roll</button>
+        </div>
       </main>
     </div>
 
@@ -131,7 +197,7 @@
         <fieldset>
           <legend>Mounting orientation (degrees)</legend>
           <label>Yaw <input id="patch-yaw" type="number" value="0" step="1"></label>
-          <label>Pitch <input id="patch-pitch" type="number" value="0" step="1"></label>
+          <label>Pitch <input id="patch-pitch" type="number" value="90" step="1"></label>
         </fieldset>
         <label><input id="patch-invert-pan" type="checkbox"> Invert pan</label>
         <label><input id="patch-invert-tilt" type="checkbox"> Invert tilt</label>
@@ -150,6 +216,14 @@
     <div id="modal-fixture-creator" class="modal hidden">
       <div class="modal-content">
         <h2>Fixture Creator <button class="modal-close">x</button></h2>
+        <fieldset>
+          <legend>Edit an existing profile (or leave on "New profile" to create one)</legend>
+          <label>Profile
+            <select id="fc-existing-profile">
+              <option value="">New profile</option>
+            </select>
+          </label>
+        </fieldset>
         <label>Name <input id="fc-name" type="text" placeholder="My Custom Fixture"></label>
         <label>Manufacturer <input id="fc-manufacturer" type="text"></label>
         <label>Mode <input id="fc-mode" type="text" placeholder="8ch"></label>
@@ -231,9 +305,11 @@
     <div id="modal-room-shape" class="modal hidden">
       <div class="modal-content wide">
         <h2>Room Shape <button class="modal-close">x</button></h2>
-        <p class="hint">Rooms are rarely perfect rectangles. Click to place floor-plan corners in order
-          (any number of sides, any shape) -- the 3D view extrudes this outline up to the ceiling height below.
-          Leave it empty to keep a simple rectangle sized by width/depth.</p>
+        <p class="hint">Rooms are rarely perfect rectangles. Click empty space to place a new corner in order,
+          or drag an existing corner to move it (any number of sides, any shape) -- the 3D view extrudes this
+          outline up to the ceiling height below. Fixtures, objects, and safety zones move/rescale with the
+          room when you save a changed shape, so they stay in the same relative spot. Leave it empty to keep a
+          simple rectangle sized by width/depth.</p>
         <label>Room name <input id="rs-name" type="text"></label>
         <div class="grid3">
           <label>Fallback width (m) <input id="rs-width" type="number" step="0.1" value="10"></label>

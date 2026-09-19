@@ -141,10 +141,17 @@ class RoomIn(BaseModel):
 
 @router.put("/room")
 def update_room(payload: RoomIn):
+    """Redrawing the room shape only ever happens here (the 2D editor) --
+    never by dragging in the 3D view, which is fixtures/objects only.
+    Room.apply_shape() rescales every fixture, object, and safety zone
+    proportionally so they keep their relative placement when the shape
+    or height changes, instead of ending up outside the new walls."""
     ctx = get_context()
     ctx.engine.room.name = payload.name
-    ctx.engine.room.dimensions = RoomDimensions(**payload.dimensions.model_dump())
-    ctx.engine.room.floor_points = [Vec2(**p.model_dump()) for p in payload.floor_points]
+    ctx.engine.room.apply_shape(
+        [Vec2(**p.model_dump()) for p in payload.floor_points],
+        RoomDimensions(**payload.dimensions.model_dump()),
+    )
     ctx.persist_room()
     return ctx.engine.room.to_dict()
 
@@ -172,6 +179,8 @@ class FixtureInstanceIn(BaseModel):
     group_ids: list[str] = []
     inverted_pan: bool = False
     inverted_tilt: bool = False
+    pan_offset_deg: float = 0.0
+    tilt_offset_deg: float = 0.0
 
 
 @router.post("/room/fixtures")
@@ -186,11 +195,13 @@ def add_fixture(payload: FixtureInstanceIn):
         profile_id=payload.profile_id,
         universe=payload.universe,
         start_address=payload.start_address,
-        position=Vec3(**payload.position.model_dump()),
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
         orientation=Orientation(**payload.orientation.model_dump()),
         group_ids=payload.group_ids,
         inverted_pan=payload.inverted_pan,
         inverted_tilt=payload.inverted_tilt,
+        pan_offset_deg=payload.pan_offset_deg,
+        tilt_offset_deg=payload.tilt_offset_deg,
     )
     ctx.engine.add_fixture(instance)
     ctx.persist_room()
@@ -208,11 +219,13 @@ def update_fixture(fixture_id: str, payload: FixtureInstanceIn):
         profile_id=payload.profile_id,
         universe=payload.universe,
         start_address=payload.start_address,
-        position=Vec3(**payload.position.model_dump()),
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
         orientation=Orientation(**payload.orientation.model_dump()),
         group_ids=payload.group_ids,
         inverted_pan=payload.inverted_pan,
         inverted_tilt=payload.inverted_tilt,
+        pan_offset_deg=payload.pan_offset_deg,
+        tilt_offset_deg=payload.tilt_offset_deg,
     )
     ctx.engine.room.fixtures[fixture_id] = instance
     ctx.persist_room()
@@ -287,8 +300,8 @@ def add_room_object(payload: RoomObjectIn):
         id=object_id,
         name=payload.name,
         kind=payload.kind,
-        position=Vec3(**payload.position.model_dump()),
-        end_position=Vec3(**payload.end_position.model_dump()) if payload.end_position else None,
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
+        end_position=ctx.engine.room.clamp_position(Vec3(**payload.end_position.model_dump())) if payload.end_position else None,
         thickness=payload.thickness,
         width=payload.width,
         depth=payload.depth,
@@ -311,8 +324,8 @@ def update_room_object(object_id: str, payload: RoomObjectIn):
         id=object_id,
         name=payload.name,
         kind=payload.kind,
-        position=Vec3(**payload.position.model_dump()),
-        end_position=Vec3(**payload.end_position.model_dump()) if payload.end_position else None,
+        position=ctx.engine.room.clamp_position(Vec3(**payload.position.model_dump())),
+        end_position=ctx.engine.room.clamp_position(Vec3(**payload.end_position.model_dump())) if payload.end_position else None,
         thickness=payload.thickness,
         width=payload.width,
         depth=payload.depth,
@@ -350,6 +363,18 @@ class GroupIn(BaseModel):
 def create_group(payload: GroupIn):
     ctx = get_context()
     group_id = payload.id or f"grp-{uuid.uuid4().hex[:8]}"
+    group = Group(id=group_id, name=payload.name, fixture_ids=payload.fixture_ids,
+                  color=payload.color)
+    ctx.engine.add_group(group)
+    ctx.persist_groups()
+    return group.to_dict()
+
+
+@router.put("/groups/{group_id}")
+def update_group(group_id: str, payload: GroupIn):
+    ctx = get_context()
+    if group_id not in ctx.engine.groups:
+        raise HTTPException(status_code=404, detail="group not found")
     group = Group(id=group_id, name=payload.name, fixture_ids=payload.fixture_ids,
                   color=payload.color)
     ctx.engine.add_group(group)

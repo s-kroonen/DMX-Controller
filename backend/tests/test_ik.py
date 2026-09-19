@@ -42,6 +42,25 @@ def test_inverted_pan_flips_sign():
     assert normal.pan_angle_deg == -inverted.pan_angle_deg
 
 
+def test_pan_offset_shifts_angle_after_inversion():
+    pos = Vec3(0, 0, 3)
+    target = Vec3(0, 0, 0)  # pan_angle_deg would be 0 with no offset
+    result = compute_pan_tilt(pos, Orientation(), target, 540, 270, pan_offset_deg=5.0)
+    assert abs(result.pan_angle_deg - 5.0) < 1e-9
+
+    inverted = compute_pan_tilt(pos, Orientation(), target, 540, 270,
+                                 inverted_pan=True, pan_offset_deg=5.0)
+    # offset is a fixed calibration trim, applied after inversion flips the sign
+    assert abs(inverted.pan_angle_deg - 5.0) < 1e-9
+
+
+def test_tilt_offset_shifts_angle():
+    pos = Vec3(0, 0, 3)
+    target = Vec3(0, 0, 0)  # tilt_angle_deg would be 0 with no offset
+    result = compute_pan_tilt(pos, Orientation(), target, 540, 270, tilt_offset_deg=-3.0)
+    assert abs(result.tilt_angle_deg - (-3.0)) < 1e-9
+
+
 def test_ray_intersects_box_direct_hit():
     origin = Vec3(0, 0, 3)
     direction = Vec3(0, 0, -1)
