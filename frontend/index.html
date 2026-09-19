@@ -135,7 +135,10 @@
         </fieldset>
         <label><input id="patch-invert-pan" type="checkbox"> Invert pan</label>
         <label><input id="patch-invert-tilt" type="checkbox"> Invert tilt</label>
-        <button id="patch-submit" class="primary-btn">Add Fixture</button>
+        <div class="btn-row">
+          <button id="patch-submit" class="primary-btn">Add Fixture</button>
+          <button id="patch-cancel-edit" type="button" class="hidden">Cancel edit</button>
+        </div>
         <hr>
         <h3>Patched fixtures</h3>
         <div id="patch-list"></div>
