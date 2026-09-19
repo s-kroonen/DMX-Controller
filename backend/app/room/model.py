@@ -175,6 +175,26 @@ class RoomObject:
 
 
 @dataclasses.dataclass
+class AnimationPoint:
+    """A named, reusable 3D point for path-based animations. Kept separate
+    from any one animation/track so several fixtures can be assigned the
+    same set of points but visit them in a different order/timing each --
+    a track just references point ids, this is where the actual position
+    lives."""
+
+    id: str
+    name: str
+    position: Vec3
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "position": dataclasses.asdict(self.position)}
+
+    @staticmethod
+    def from_dict(d: dict) -> "AnimationPoint":
+        return AnimationPoint(id=d["id"], name=d["name"], position=Vec3(**d["position"]))
+
+
+@dataclasses.dataclass
 class SafetyZone:
     """An axis-aligned box (in room space) that a beam may never enter.
 
@@ -222,6 +242,7 @@ class Room:
     fixtures: dict[str, FixtureInstance] = dataclasses.field(default_factory=dict)
     safety_zones: dict[str, SafetyZone] = dataclasses.field(default_factory=dict)
     objects: dict[str, RoomObject] = dataclasses.field(default_factory=dict)
+    animation_points: dict[str, AnimationPoint] = dataclasses.field(default_factory=dict)
 
     def effective_floor_points(self) -> list[Vec2]:
         if len(self.floor_points) >= 3:
@@ -283,6 +304,8 @@ class Room:
         for zone in self.safety_zones.values():
             rescale(zone.min_corner)
             rescale(zone.max_corner)
+        for point in self.animation_points.values():
+            rescale(point.position)
 
     def clamp_position(self, position: Vec3) -> Vec3:
         """Keep a point inside the room's actual floor footprint and
@@ -318,6 +341,12 @@ class Room:
     def remove_object(self, object_id: str) -> None:
         self.objects.pop(object_id, None)
 
+    def add_animation_point(self, point: AnimationPoint) -> None:
+        self.animation_points[point.id] = point
+
+    def remove_animation_point(self, point_id: str) -> None:
+        self.animation_points.pop(point_id, None)
+
     def to_dict(self) -> dict:
         return {
             "name": self.name,
@@ -326,6 +355,7 @@ class Room:
             "fixtures": [f.to_dict() for f in self.fixtures.values()],
             "safety_zones": [z.to_dict() for z in self.safety_zones.values()],
             "objects": [o.to_dict() for o in self.objects.values()],
+            "animation_points": [p.to_dict() for p in self.animation_points.values()],
         }
 
     @staticmethod
@@ -341,4 +371,6 @@ class Room:
             room.add_safety_zone(SafetyZone.from_dict(z))
         for o in d.get("objects", []):
             room.add_object(RoomObject.from_dict(o))
+        for p in d.get("animation_points", []):
+            room.add_animation_point(AnimationPoint.from_dict(p))
         return room

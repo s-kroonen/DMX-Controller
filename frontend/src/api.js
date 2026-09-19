@@ -36,6 +36,10 @@ export const api = {
   addSafetyZone: (zone) => req("POST", "/room/safety-zones", zone),
   deleteSafetyZone: (id) => req("DELETE", `/room/safety-zones/${id}`),
 
+  addAnimationPoint: (point) => req("POST", "/room/points", point),
+  updateAnimationPoint: (id, point) => req("PUT", `/room/points/${id}`, point),
+  deleteAnimationPoint: (id) => req("DELETE", `/room/points/${id}`),
+
   addRoomObject: (obj) => req("POST", "/room/objects", obj),
   updateRoomObject: (id, obj) => req("PUT", `/room/objects/${id}`, obj),
   deleteRoomObject: (id) => req("DELETE", `/room/objects/${id}`),
@@ -65,6 +69,12 @@ export const api = {
   deleteAnimation: (id) => req("DELETE", `/animations/${id}`),
   playAnimation: (id) => req("POST", `/animations/${id}/play`),
   stopAnimation: (id) => req("POST", `/animations/${id}/stop`),
+
+  listPatterns: () => req("GET", "/patterns"),
+  savePattern: (pattern) => req("POST", "/patterns", pattern),
+  deletePattern: (id) => req("DELETE", `/patterns/${id}`),
+  playPattern: (id) => req("POST", `/patterns/${id}/play`),
+  stopPattern: (id) => req("POST", `/patterns/${id}/stop`),
 
   dmxPorts: () => req("GET", "/dmx/ports"),
   dmxStatus: () => req("GET", "/dmx/status"),

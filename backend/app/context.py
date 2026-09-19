@@ -16,7 +16,7 @@ from .dmx.interface import DmxOutput
 from .dmx.simulator import SimulatedDmxOutput
 from .dmx.usb_procs import kill_holders
 from .fixtures.library import FixtureLibrary
-from .show.animation import Animation, AnimationPlayer
+from .show.animation import Animation, AnimationPlayer, PatternAnimation, PatternPlayer
 from .show.engine import ShowEngine
 from .storage import Storage
 
@@ -49,6 +49,10 @@ class AppContext:
             a.id: a for a in self.storage.load_animations()
         }
         self.players: dict[str, AnimationPlayer] = {}
+        self.patterns: dict[str, PatternAnimation] = {
+            p.id: p for p in self.storage.load_patterns()
+        }
+        self.pattern_players: dict[str, PatternPlayer] = {}
         self.dmx.start()  # no-op if _build_initial_dmx_output already started it
 
     def _build_initial_dmx_output(self) -> DmxOutput:
@@ -172,6 +176,9 @@ class AppContext:
     def persist_animations(self) -> None:
         self.storage.save_animations(list(self.animations.values()))
 
+    def persist_patterns(self) -> None:
+        self.storage.save_patterns(list(self.patterns.values()))
+
     # -- animation playback --------------------------------------------
 
     def play_animation(self, animation_id: str) -> None:
@@ -186,8 +193,22 @@ class AppContext:
         if player:
             player.stop()
 
+    def play_pattern(self, pattern_id: str) -> None:
+        self.stop_pattern(pattern_id)
+        pattern = self.patterns[pattern_id]
+        player = PatternPlayer(self.engine, pattern)
+        player.start()
+        self.pattern_players[pattern_id] = player
+
+    def stop_pattern(self, pattern_id: str) -> None:
+        player = self.pattern_players.pop(pattern_id, None)
+        if player:
+            player.stop()
+
     def shutdown(self) -> None:
         for player in list(self.players.values()):
+            player.stop()
+        for player in list(self.pattern_players.values()):
             player.stop()
         self.dmx.stop()
 

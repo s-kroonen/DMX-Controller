@@ -142,11 +142,27 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   0 and touching the dimmer stops the strobe; in a mixed selection (e.g. a head
   plus a Beamz with separate channels) the dimmer is held and everything strobes
   together.
-- **Animation engine** (`app/show/animation.py`): keyframes reference
-  room-space target points plus color/dimmer/strobe, not raw channel
-  values, so the IK core is what turns a keyframed path into correct
-  pan/tilt every tick -- avoiding the ellipse/faceting distortion you get
-  keyframing raw pan/tilt directly.
+- **Animation engine** (`app/show/animation.py`): two kinds, both
+  movement-only for now (color is a separate, later concern):
+  - **Pattern** animations (`PatternAnimation`/`PatternPlayer`) are
+    freestyler-style -- a raw pan/tilt shape (circle, figure-8, linear,
+    square) computed straight from elapsed time and sent directly to the
+    fixture(s)' pan/tilt channels, no room-space math, no IK.
+  - **Path** animations (`Animation`/`AnimationTrack`/`Keyframe`) are the
+    calculated kind: keyframes reference room-space target points plus
+    color/dimmer/strobe, not raw channel values, so the IK core is what
+    turns a keyframed path into correct pan/tilt every tick -- avoiding
+    the ellipse/faceting distortion you get keyframing raw pan/tilt
+    directly. A keyframe can point at a named, reusable `AnimationPoint`
+    (`Room.animation_points`, its own **3D Points** section in the
+    Animations modal) instead of only a one-off coordinate, so several
+    fixtures can share the same point set but each visit them in their
+    own order/timing by just building their own track -- and each
+    track's `time_offset_s` shifts its own playback clock within the
+    same shared animation, for staging the same pattern per fixture
+    instead of running everything in lockstep. Running several fixtures
+    on genuinely different animations just means playing separate
+    Animation objects independently.
 - **Room shape + objects** (`app/room/model.py`): a room is rarely a
   perfect rectangle, so `Room.floor_points` holds an arbitrary polygon
   (any number of sides, drawn -- and redrawn -- as a 2D floor plan in the
