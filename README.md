@@ -218,10 +218,14 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
   - Fixtures render with a model shaped for their `fixture_type` --
     moving head (base/yoke/head), smoke machine (box + nozzle), PAR can
     (cylinder), or a plain box for anything else -- with a bright green
-    arrow on every fixture showing exactly which way it's calibrated to
-    call pan/tilt zero (its mounting `orientation.yaw_deg`), so a
-    miscalibrated "front" is obvious at a glance instead of hidden inside
-    a featureless ball.
+    arrow on every fixture showing which way it faces (its mounting
+    `orientation.yaw_deg`). A moving head is drawn as a STATIC picture of
+    the unit, never following live pan/tilt: base at the bottom, the display
+    (blue panel) on the front with the green arrow pointing out of it, and
+    the head parked pointing to its own LEFT. Because it never points where
+    the beam points, it can't be mistaken for the real aim (the beam line
+    is that). Mounting rotates the whole picture: standing = base down,
+    hanging = upside down, wall = on its side.
   - Each floating control window remembers whether it's open/closed and
     where you left it (localStorage, per browser) across a page refresh.
     A closed window is never stranded -- the **Windows** menu in the top

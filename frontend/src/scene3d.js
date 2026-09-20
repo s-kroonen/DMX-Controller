@@ -597,9 +597,10 @@ function updateFixtures() {
     // manipulate each rotation directly and read it straight back out as
     // yaw_deg/pitch_deg on drag-end. pitch_deg's ik.py convention is
     // 0=straight down, 90=horizontal, 180=straight up -- it places the fixture's
-    // HOME (beam direction at tilt centre, along the pan axis). The arrow
-    // shows it: a fixture standing on the floor (pitch 180) points up.
-    // Offset by -90 so pitch=90 leaves pitchGroup unrotated.
+    // HOME (beam direction at tilt centre, along the pan axis), which is the
+    // picture's local +Y: a fixture standing on the floor (pitch 180) has its
+    // base down and its pan axis up. Offset by -90 so pitch=90 leaves pitchGroup
+    // unrotated.
     if (!draggingYaw) {
       const yawRad = THREE.MathUtils.degToRad(fixture.orientation?.yaw_deg || 0);
       entry.group.rotation.z = -yawRad;
@@ -607,6 +608,15 @@ function updateFixtures() {
     if (!draggingPitch) {
       const pitchRad = THREE.MathUtils.degToRad(fixture.orientation?.pitch_deg ?? 180);
       entry.pitchGroup.rotation.x = pitchRad - Math.PI / 2;
+    }
+    // The moving-head picture is authored for a standing unit (front = local -Z). ik.py puts
+    // the front of a hung or wall-mounted unit at the OTHER side of the pan axis (it keeps
+    // the front on the yaw direction), so flip the picture about its pan axis there:
+    // exactly when cos(pitch) > 0 (pitch 0..90), and at 90 itself.
+    if (entry.isMovingHead) {
+      const pitchDeg = ((fixture.orientation?.pitch_deg ?? 180) % 360 + 360) % 360;
+      const flip = Math.cos(THREE.MathUtils.degToRad(pitchDeg)) > 1e-9 || Math.abs(pitchDeg - 90) < 1e-6;
+      entry.mountGroup.rotation.y = flip ? Math.PI : 0;
     }
     // Roll rotates around the fixture's own front/aim axis (local Y) --
     // no backend convention to match, so roll_deg maps straight to radians.
@@ -631,35 +641,19 @@ function updateFixtures() {
         fixtureState.last_target.x, fixtureState.last_target.y, fixtureState.last_target.z
       );
     }
-    // The beam is a child of `pitchGroup`, which sits inside `group` --
-    // both now carry rotation (yaw on `group`, pitch on `pitchGroup`), so
-    // its endpoint (computed in the room-space frame, like
-    // fixture.position) needs the inverse of BOTH rotations applied, in
-    // reverse order, to land in pitchGroup's local space.
+    // The beam is a child of `rollGroup`, several rotated groups deep (yaw, pitch, the
+    // mount flip, roll). Its endpoint is a room-space point, so let three.js bring it into
+    // the beam's parent space rather than undoing each rotation by hand.
     const positions = entry.beam.geometry.attributes.position;
-    const dx = beamEnd.x - entry.group.position.x;
-    const dy = beamEnd.y - entry.group.position.y;
-    const dz = beamEnd.z - entry.group.position.z;
-    // undo yaw (group's Z rotation)
-    const cosYaw = Math.cos(entry.group.rotation.z);
-    const sinYaw = Math.sin(entry.group.rotation.z);
-    const afterYawX = dx * cosYaw + dy * sinYaw;
-    const afterYawY = -dx * sinYaw + dy * cosYaw;
-    const afterYawZ = dz;
-    // undo pitch (pitchGroup's X rotation)
-    const cosPitch = Math.cos(entry.pitchGroup.rotation.x);
-    const sinPitch = Math.sin(entry.pitchGroup.rotation.x);
-    const afterPitchX = afterYawX;
-    const afterPitchY = afterYawY * cosPitch + afterYawZ * sinPitch;
-    const afterPitchZ = -afterYawY * sinPitch + afterYawZ * cosPitch;
-    // undo roll (rollGroup's Y rotation)
-    const cosRoll = Math.cos(entry.rollGroup.rotation.y);
-    const sinRoll = Math.sin(entry.rollGroup.rotation.y);
-    const localX = afterPitchX * cosRoll - afterPitchZ * sinRoll;
-    const localY = afterPitchY;
-    const localZ = afterPitchX * sinRoll + afterPitchZ * cosRoll;
-    positions.setXYZ(0, 0, 0, 0);
-    positions.setXYZ(1, localX, localY, localZ);
+    // beamEnd is a ROOM-space point (Z up), but worldToLocal wants three.js world space
+    // (Y up): the whole room hangs under roomRoot, which is rotated to convert between
+    // them, so go room -> world through the fixture's parent first.
+    entry.rollGroup.updateWorldMatrix(true, false);
+    const local = entry.rollGroup.worldToLocal(entry.group.parent.localToWorld(beamEnd.clone()));
+    // a moving head's light leaves from its head, not from the base
+    const originY = entry.isMovingHead ? 0.10 : 0;
+    positions.setXYZ(0, 0, originY, 0);
+    positions.setXYZ(1, local.x, local.y, local.z);
     positions.needsUpdate = true;
 
     const beamBlocked = fixtureState && fixtureState.blocked_by_safety_zone;
@@ -667,32 +661,50 @@ function updateFixtures() {
   }
 }
 
-// Body shapes are authored so their "front" faces local +Y at zero
-// rotation -- updateFixtures() then rotates the whole outer fixture group
-// (bodyGroup, arrow and beam are all its children) by the fixture's
-// mounted orientation.yaw_deg, so the model actually shows which way it's
-// calibrated to call pan/tilt zero, not just a featureless ball, and the
-// rotate gizmo (which attaches to that same outer group) can drive this
-// rotation directly. A bright green arrow is added on top regardless of
-// body shape, since a small shape asymmetry can be hard to read at a
-// glance across a room.
+// Bodies are authored in the fixture's own frame and mounted by updateFixtures():
+// the outer group carries position + yaw, `pitchGroup` places the fixture's HOME
+// (its pan axis / local +Y) per its mounting, and everything below is a child of
+// those, so the same picture serves standing, hanging and wall-mounted units.
+//   * moving heads: pan axis = local +Y, display = local -Z, head parked at the
+//     fixture's left (-X). A static picture, deliberately NOT tilting with the
+//     live pan/tilt, so it can't be mistaken for the real aim.
+//   * everything else (PAR, laser, generic...): the aim/front is local +Y.
+// A bright green arrow marks the front regardless of body shape, since a small
+// shape asymmetry can be hard to read across a room.
 function buildFixtureBody(fixtureType, material) {
   const bodyGroup = new THREE.Group();
   const lensMat = new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0x554400 });
 
   if (fixtureType === "moving_head") {
-    const base = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.12), material);
-    base.position.z = -0.06;
+    // A STATIC picture of the unit, authored in its own frame -- it never follows the
+    // live pan/tilt, so it can't be mistaken for where the beam really points (the
+    // beam line is that). Frame: the pan axis is local +Y (base at the bottom, head
+    // on top), the DISPLAY faces local -Z, and the head is parked pointing LEFT
+    // (local -X). Mounting (standing / hanging / wall) then just rotates this whole
+    // picture; see updateFixtures().
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.22), material);
+    base.position.y = -0.06;
     bodyGroup.add(base);
+
+    // the display, on the front face of the base
+    const screenMat = new THREE.MeshStandardMaterial({ color: 0x0b1a2a, emissive: 0x1e88e5, emissiveIntensity: 0.9 });
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.05), screenMat);
+    screen.position.set(0, -0.06, -0.1105);
+    screen.rotation.y = Math.PI; // a plane faces +Z by default; this one faces -Z
+    bodyGroup.add(screen);
+
     const armGeo = new THREE.BoxGeometry(0.04, 0.16, 0.04);
-    const armL = new THREE.Mesh(armGeo, material); armL.position.set(-0.09, 0.03, 0.05); bodyGroup.add(armL);
-    const armR = new THREE.Mesh(armGeo, material); armR.position.set(0.09, 0.03, 0.05); bodyGroup.add(armR);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 16), material);
-    head.position.set(0, 0.04, 0.09);
+    const armL = new THREE.Mesh(armGeo, material); armL.position.set(-0.10, 0.08, 0); bodyGroup.add(armL);
+    const armR = new THREE.Mesh(armGeo, material); armR.position.set(0.10, 0.08, 0); bodyGroup.add(armR);
+
+    // the head: a barrel lying along X between the arms, lens on its LEFT end
+    const head = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.14, 20), material);
+    head.rotation.z = Math.PI / 2;
+    head.position.y = 0.10;
     bodyGroup.add(head);
-    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.045, 16), lensMat);
-    lens.position.set(0, 0.04 + 0.099, 0.09);
-    lens.rotation.x = -Math.PI / 2; // face +Y (front)
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.05, 20), lensMat);
+    lens.position.set(-0.0715, 0.10, 0);
+    lens.rotation.y = -Math.PI / 2; // face -X (left)
     bodyGroup.add(lens);
     return bodyGroup;
   }
@@ -749,8 +761,13 @@ export function createFixtureMesh(fixture) {
 
   const pitchGroup = new THREE.Group();
   group.add(pitchGroup);
+  // Flips a moving head's picture 180 degrees about its pan axis when it is hung (or on a
+  // wall) so that its display side ends up where ik.py's mount_frame puts the front (the
+  // yaw direction) for every mounting. Nothing else reads or writes it.
+  const mountGroup = new THREE.Group();
+  pitchGroup.add(mountGroup);
   const rollGroup = new THREE.Group(); // rotates around the fixture's own front/aim axis (Y)
-  pitchGroup.add(rollGroup);
+  mountGroup.add(rollGroup);
 
   const baseColor = 0x3a7bd5;
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: baseColor });
@@ -765,9 +782,12 @@ export function createFixtureMesh(fixture) {
   // +Y -- the parent groups' own yaw/pitch rotations (set in
   // updateFixtures()) are what actually point it the right way, so it
   // needs no per-tick recompute.
-  const arrow = new THREE.ArrowHelper(
-    new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), 0.3, 0x33ff66, 0.09, 0.05
-  );
+  // Moving heads: the arrow marks the DISPLAY side (local -Z), not the beam. Everything
+  // else is authored facing local +Y, so the arrow points where they aim.
+  const isMovingHead = fixtureType === "moving_head";
+  const arrow = isMovingHead
+    ? new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, -0.06, 0), 0.3, 0x33ff66, 0.09, 0.05)
+    : new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), 0.3, 0x33ff66, 0.09, 0.05);
   rollGroup.add(arrow);
 
   const beamGeo = new THREE.BufferGeometry().setFromPoints([
@@ -779,7 +799,7 @@ export function createFixtureMesh(fixture) {
   }));
   rollGroup.add(beam);
 
-  return { group, pitchGroup, rollGroup, bodyGroup, bodyMaterial, arrow, beam, profileId: fixture.profile_id };
+  return { group, pitchGroup, mountGroup, rollGroup, bodyGroup, bodyMaterial, arrow, beam, isMovingHead, profileId: fixture.profile_id };
 }
 
 function onSceneClick(evt, container) {
