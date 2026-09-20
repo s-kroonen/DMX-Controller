@@ -796,7 +796,14 @@ function onSceneClick(evt, container) {
   // Clicking a fixture selects it directly in the 3D view (same as
   // clicking its sidebar button) instead of aiming, and takes priority
   // over everything else so you can always grab exactly what you clicked.
-  const fixtureMeshList = [...fixtureMeshes.values()].map((e) => e.group);
+  // Raycast only the physical body model (entry.bodyGroup), NOT the whole
+  // fixture group -- that would also include the beam line, which
+  // stretches across the room to wherever the fixture is currently
+  // aimed, and the front-direction arrow. Both are much bigger than the
+  // actual fixture, so including them made clicking the floor/a wall
+  // near a beam's path (a very common thing to do when aiming a whole
+  // group) get misread as "select this one fixture" instead.
+  const fixtureMeshList = [...fixtureMeshes.values()].map((e) => e.bodyGroup);
   const fixtureHits = raycaster.intersectObjects(fixtureMeshList, true);
   if (fixtureHits.length > 0) {
     let node = fixtureHits[0].object;
