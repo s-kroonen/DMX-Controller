@@ -1,13 +1,18 @@
 import { api, connectWebSocket } from "../src/api.js";
 import { state, onStateChange, notifyStateChange } from "../src/state.js";
 import { loadInitialData } from "../src/main_data.js";
+import { initAim3D, resizeAim3D } from "./aim3d.js";
 
-// A radically simpler surface for phones/tablets than the desktop UI: one
-// screen at a time (bottom tab bar) instead of overlaid floating windows,
-// and no 3D scene at all (a full Three.js view isn't usable on a small
-// touch screen) -- the Aim tab is a flat, top-down floor plan instead.
-// Reuses the same backend API and the same api.js/state.js modules as the
-// desktop UI (no separate state model to keep in sync).
+// A radically simpler surface for phones than the desktop UI: instead of
+// overlaid floating windows and a 3D scene that assume a lot of screen,
+// this is a small set of full-height main screens (Color / Control / Aim,
+// switched with a segmented control) plus side drawers for things that
+// are menus rather than screens you'd "leave" -- which lights are
+// selected, which show (animation/pattern) is running or being edited,
+// and sound input config. Drawers slide over the content and back; they
+// don't replace it, so e.g. picking a different light doesn't lose your
+// place on the Aim screen. Reuses the same api.js/state.js/main_data.js
+// as the desktop UI -- only the layout differs.
 
 const pctToLogical = (pct) => Math.round((Number(pct) * 255) / 100);
 
@@ -21,32 +26,75 @@ function sendToSelection(call) {
   call(ids).catch(console.error);
 }
 
-// -------------------------------------------------------------- tab bar
+// -------------------------------------------------------------- drawers
 
-function initTabs() {
-  document.querySelectorAll(".tab").forEach((btn) => {
-    btn.onclick = () => showScreen(btn.dataset.screen);
+let openDrawer = null;
+let aim3dStarted = false;
+
+function initDrawers() {
+  document.querySelectorAll(".drawer-tab").forEach((btn) => {
+    btn.onclick = () => toggleDrawer(btn.dataset.drawer);
+  });
+  document.getElementById("drawer-close").onclick = () => closeDrawer();
+  document.getElementById("drawer-backdrop").onclick = () => closeDrawer();
+}
+
+function toggleDrawer(name) {
+  if (openDrawer === name) { closeDrawer(); return; }
+  openDrawer = name;
+  document.getElementById("drawer").classList.remove("hidden");
+  document.getElementById("drawer-backdrop").classList.remove("hidden");
+  document.querySelectorAll(".drawer-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.drawer === name);
+  });
+  document.querySelectorAll(".drawer-pane").forEach((pane) => {
+    pane.classList.toggle("hidden", pane.id !== `drawer-${name}`);
+  });
+  document.getElementById("drawer-title").textContent =
+    name.charAt(0).toUpperCase() + name.slice(1);
+  if (name === "shows") { renderAnimList(); renderPatternList(); renderPointList(); }
+  if (name === "sound") { refreshSoundDevices(); renderSoundStatus(); }
+  if (name === "more") renderMoreDmxStatus();
+}
+
+function closeDrawer() {
+  openDrawer = null;
+  document.getElementById("drawer").classList.add("hidden");
+  document.getElementById("drawer-backdrop").classList.add("hidden");
+  document.querySelectorAll(".drawer-tab").forEach((btn) => btn.classList.remove("active"));
+}
+
+// -------------------------------------------------------------- main screens
+
+function initMainTabs() {
+  document.querySelectorAll(".main-tab").forEach((btn) => {
+    btn.onclick = () => showMainScreen(btn.dataset.screen);
   });
 }
 
-function showScreen(name) {
+function showMainScreen(name) {
   document.querySelectorAll(".screen").forEach((el) => {
     el.classList.toggle("hidden", el.id !== `screen-${name}`);
   });
-  document.querySelectorAll(".tab").forEach((btn) => {
+  document.querySelectorAll(".main-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.screen === name);
   });
-  if (name === "aim") drawAimCanvas();
-  if (name === "shows") { renderAnimList(); renderPatternList(); }
-  if (name === "more") { renderDmxStatus(); renderSoundStatus(); }
+  if (name === "aim") {
+    if (!aim3dStarted) {
+      aim3dStarted = true;
+      initAim3D(document.getElementById("aim3d-container"));
+    } else {
+      resizeAim3D();
+    }
+  }
 }
 
-// -------------------------------------------------------------- select screen
+// -------------------------------------------------------------- lights drawer
 
 let lastGroupIds = "";
 let lastFixtureIds = "";
 
-function renderSelectScreen() {
+function renderLightsDrawer() {
   renderTileGrid("group-buttons", state.groups, lastGroupIds, (k) => { lastGroupIds = k; });
   renderTileGrid("fixture-buttons", state.room.fixtures, lastFixtureIds, (k) => { lastFixtureIds = k; });
 }
@@ -84,24 +132,45 @@ function selectionSummaryText() {
   }).join(", ");
 }
 
-function renderSelectionBars() {
-  const text = selectionSummaryText();
-  const control = document.getElementById("control-selection-bar");
-  const aim = document.getElementById("aim-selection-bar");
-  if (control) control.textContent = text;
-  if (aim) aim.textContent = text;
+function initClearSelection() {
+  document.getElementById("btn-clear-selection").onclick = () => {
+    state.selection.clear();
+    notifyStateChange();
+  };
 }
 
-// -------------------------------------------------------------- control screen
+// A <select> of every group + fixture, for picking an animation/pattern
+// target -- much friendlier on a phone than typing a raw id.
+function populateTargetSelect(select, currentValue) {
+  select.innerHTML = "";
+  const groupOpt = document.createElement("optgroup");
+  groupOpt.label = "Groups";
+  for (const g of state.groups) {
+    const opt = document.createElement("option");
+    opt.value = g.id; opt.textContent = g.name;
+    groupOpt.appendChild(opt);
+  }
+  const fixtureOpt = document.createElement("optgroup");
+  fixtureOpt.label = "Fixtures";
+  for (const f of state.room.fixtures) {
+    const opt = document.createElement("option");
+    opt.value = f.id; opt.textContent = f.name;
+    fixtureOpt.appendChild(opt);
+  }
+  select.appendChild(groupOpt);
+  select.appendChild(fixtureOpt);
+  if (currentValue) select.value = currentValue;
+}
 
-function initColorCard() {
+// -------------------------------------------------------------- color screen
+
+function initColorScreen() {
   const red = document.getElementById("rgb-red");
   const green = document.getElementById("rgb-green");
   const blue = document.getElementById("rgb-blue");
   const white = document.getElementById("rgb-white");
   const push = () => {
-    const ids = currentTargetIds();
-    ids.forEach((id) =>
+    currentTargetIds().forEach((id) =>
       api.setColor(id, Number(red.value), Number(green.value), Number(blue.value), Number(white.value))
         .catch(console.error)
     );
@@ -123,10 +192,8 @@ function initColorCard() {
   }
 }
 
-// Same shared-channel rule as the desktop Strobe/Shutter window: if every
-// selected fixture's dimmer and strobe are the same physical DMX channel,
-// touching one silently zeroes the other so the sliders never lie about
-// what the fixture is actually doing.
+// -------------------------------------------------------------- control screen
+
 function selectionSharesLightChannel() {
   let relevant = 0, shared = 0;
   for (const fid of state.expandedFixtureIds()) {
@@ -186,7 +253,6 @@ function initPanTiltPad() {
     const tilt = Math.round(fy * 255);
     currentTargetIds().forEach((id) => api.setPanTilt(id, pan, tilt).catch(console.error));
   };
-  // Pointer events (not mouse) so this works uniformly for touch and mouse.
   pad.addEventListener("pointerdown", (e) => { pad.setPointerCapture(e.pointerId); setFromPad(e); });
   pad.addEventListener("pointermove", (e) => { if (e.buttons || e.pressure > 0) setFromPad(e); });
 }
@@ -229,105 +295,96 @@ function renderCustomCard() {
   }
 }
 
-// -------------------------------------------------------------- aim screen
+// -------------------------------------------------------------- shows: points
 
-function effectiveFloorPoints() {
-  const drawn = state.room.floor_points || [];
-  if (drawn.length >= 3) return drawn;
-  const dims = state.room.dimensions || { width: 10, depth: 10 };
-  const hw = dims.width / 2, hd = dims.depth / 2;
-  return [{ x: -hw, y: -hd }, { x: hw, y: -hd }, { x: hw, y: hd }, { x: -hw, y: hd }];
+async function submitPoint() {
+  const name = document.getElementById("pt-name").value || "Point";
+  const position = {
+    x: Number(document.getElementById("pt-x").value),
+    y: Number(document.getElementById("pt-y").value),
+    z: Number(document.getElementById("pt-z").value),
+  };
+  await api.addAnimationPoint({ name, position });
+  await refreshRoom();
+  renderPointList();
 }
 
-function aimCanvasTransform(canvas) {
-  const points = effectiveFloorPoints();
-  const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1);
-  const pad = 20;
-  const scale = Math.min((canvas.width - pad * 2) / w, (canvas.height - pad * 2) / h);
-  // room +Y is "away from the operator" -- draw it as up on screen (canvas Y grows down).
-  const toScreen = (p) => ({
-    x: pad + (p.x - minX) * scale,
-    y: canvas.height - pad - (p.y - minY) * scale,
-  });
-  const toRoom = (sx, sy) => ({
-    x: minX + (sx - pad) / scale,
-    y: minY + (canvas.height - pad - sy) / scale,
-  });
-  return { points, toScreen, toRoom };
-}
-
-function drawAimCanvas() {
-  const canvas = document.getElementById("aim-canvas");
-  const ctx = canvas.getContext("2d");
-  const { points, toScreen } = aimCanvasTransform(canvas);
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#1a1d22";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.strokeStyle = "#3a7bd5";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  points.forEach((p, i) => {
-    const s = toScreen(p);
-    if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
-  });
-  ctx.closePath();
-  ctx.stroke();
-
-  for (const fixture of state.room.fixtures) {
-    const s = toScreen({ x: fixture.position.x, y: fixture.position.y });
-    ctx.fillStyle = state.isSelected(fixture.id) ? "#ffffff" : "#9aa2ac";
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, state.isSelected(fixture.id) ? 7 : 5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-function initAimCanvas() {
-  const canvas = document.getElementById("aim-canvas");
-  const heightSlider = document.getElementById("aim-height");
-  const heightVal = document.getElementById("aim-height-val");
-  heightSlider.addEventListener("input", () => { heightVal.textContent = heightSlider.value; });
-
-  canvas.addEventListener("pointerdown", (evt) => {
-    const rect = canvas.getBoundingClientRect();
-    const sx = ((evt.clientX - rect.left) / rect.width) * canvas.width;
-    const sy = ((evt.clientY - rect.top) / rect.height) * canvas.height;
-    const { toRoom } = aimCanvasTransform(canvas);
-    const point = toRoom(sx, sy);
-    const z = Number(heightSlider.value);
-    const ids = currentTargetIds();
-    if (ids.length === 0) return;
-    ids.forEach((id) => api.aim(id, point.x, point.y, z).catch(console.error));
-    drawAimCanvas();
-  });
-}
-
-// -------------------------------------------------------------- shows screen
-
-async function renderAnimList() {
-  const container = document.getElementById("anim-list");
-  const animations = await api.listAnimations();
+function renderPointList() {
+  const container = document.getElementById("pt-list");
   container.innerHTML = "";
-  for (const anim of animations) {
+  for (const point of state.room.animation_points || []) {
     const row = document.createElement("div");
     row.className = "row";
-    row.innerHTML = `<span>${anim.name}</span>`;
-    const playBtn = document.createElement("button");
-    playBtn.textContent = "Play";
-    playBtn.onclick = () => api.playAnimation(anim.id).catch(console.error);
-    const stopBtn = document.createElement("button");
-    stopBtn.textContent = "Stop";
-    stopBtn.onclick = () => api.stopAnimation(anim.id).catch(console.error);
-    row.appendChild(playBtn);
-    row.appendChild(stopBtn);
+    row.innerHTML = `<span>${point.name} (${point.position.x}, ${point.position.y}, ${point.position.z})</span>`;
+    const del = document.createElement("button");
+    del.textContent = "Delete";
+    del.onclick = async () => { await api.deleteAnimationPoint(point.id); await refreshRoom(); renderPointList(); };
+    row.appendChild(del);
     container.appendChild(row);
   }
-  if (animations.length === 0) container.innerHTML = '<div class="hint">No animations yet -- create them on the desktop UI.</div>';
+}
+
+async function refreshRoom() {
+  state.room = await api.getRoom();
+  notifyStateChange();
+}
+
+// -------------------------------------------------------------- shows: patterns
+
+function patternEditorHtml() {
+  return `
+    <label>Name <input class="pat-name" type="text" placeholder="Circle sweep"></label>
+    <label>Target <select class="pat-target"></select></label>
+    <label>Shape
+      <select class="pat-shape">
+        <option value="circle">Circle</option>
+        <option value="figure8">Figure 8</option>
+        <option value="linear">Linear (pan only)</option>
+        <option value="square">Square</option>
+      </select>
+    </label>
+    <label>Speed (Hz) <input class="pat-speed" type="number" step="0.05" value="0.2"></label>
+    <label>Pan center (0-255) <input class="pat-pan-center" type="number" min="0" max="255" value="128"></label>
+    <label>Tilt center (0-255) <input class="pat-tilt-center" type="number" min="0" max="255" value="128"></label>
+    <label>Pan size <input class="pat-pan-size" type="number" min="0" max="255" value="80"></label>
+    <label>Tilt size <input class="pat-tilt-size" type="number" min="0" max="255" value="80"></label>
+    <div class="btn-row">
+      <button class="pat-save">Save</button>
+      <button class="pat-cancel">Cancel</button>
+    </div>
+  `;
+}
+
+function openPatternEditor(pattern) {
+  const editor = document.getElementById("pattern-editor");
+  editor.innerHTML = patternEditorHtml();
+  editor.classList.remove("hidden");
+  populateTargetSelect(editor.querySelector(".pat-target"), pattern?.target_id);
+  if (pattern) {
+    editor.querySelector(".pat-name").value = pattern.name;
+    editor.querySelector(".pat-shape").value = pattern.shape;
+    editor.querySelector(".pat-speed").value = pattern.speed_hz;
+    editor.querySelector(".pat-pan-center").value = pattern.pan_center;
+    editor.querySelector(".pat-tilt-center").value = pattern.tilt_center;
+    editor.querySelector(".pat-pan-size").value = pattern.pan_size;
+    editor.querySelector(".pat-tilt-size").value = pattern.tilt_size;
+  }
+  editor.querySelector(".pat-cancel").onclick = () => editor.classList.add("hidden");
+  editor.querySelector(".pat-save").onclick = async () => {
+    await api.savePattern({
+      id: pattern?.id,
+      name: editor.querySelector(".pat-name").value || "Pattern",
+      target_id: editor.querySelector(".pat-target").value,
+      shape: editor.querySelector(".pat-shape").value,
+      speed_hz: Number(editor.querySelector(".pat-speed").value) || 0,
+      pan_center: Number(editor.querySelector(".pat-pan-center").value) || 0,
+      tilt_center: Number(editor.querySelector(".pat-tilt-center").value) || 0,
+      pan_size: Number(editor.querySelector(".pat-pan-size").value) || 0,
+      tilt_size: Number(editor.querySelector(".pat-tilt-size").value) || 0,
+    });
+    editor.classList.add("hidden");
+    renderPatternList();
+  };
 }
 
 async function renderPatternList() {
@@ -344,16 +401,202 @@ async function renderPatternList() {
     const stopBtn = document.createElement("button");
     stopBtn.textContent = "Stop";
     stopBtn.onclick = () => api.stopPattern(pattern.id).catch(console.error);
-    row.appendChild(playBtn);
-    row.appendChild(stopBtn);
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Edit";
+    editBtn.onclick = () => openPatternEditor(pattern);
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "Delete";
+    delBtn.onclick = async () => { await api.deletePattern(pattern.id); renderPatternList(); };
+    row.append(playBtn, stopBtn, editBtn, delBtn);
     container.appendChild(row);
   }
-  if (patterns.length === 0) container.innerHTML = '<div class="hint">No patterns yet -- create them on the desktop UI.</div>';
+  if (patterns.length === 0) container.innerHTML = '<div class="hint">No patterns yet.</div>';
 }
 
-// -------------------------------------------------------------- more screen
+// -------------------------------------------------------------- shows: animations
 
-async function renderDmxStatus() {
+function keyframeRowHtml() {
+  const points = state.room.animation_points || [];
+  const pointOptions = ['<option value="">(raw X/Y/Z)</option>']
+    .concat(points.map((p) => `<option value="${p.id}">${p.name}</option>`))
+    .join("");
+  return `
+    <label>t(s) <input type="number" step="0.1" class="kf-time" value="0"></label>
+    <label>Point <select class="kf-point">${pointOptions}</select></label>
+    <label>X <input type="number" step="0.1" class="kf-x"></label>
+    <label>Y <input type="number" step="0.1" class="kf-y"></label>
+    <label>Z <input type="number" step="0.1" class="kf-z"></label>
+    <label>Dimmer (0-255, optional) <input type="number" class="kf-dimmer"></label>
+    <button type="button" class="kf-remove wide-btn">Remove keyframe</button>
+  `;
+}
+
+function addKeyframeRow(container, keyframe) {
+  const row = document.createElement("div");
+  row.className = "keyframe-row";
+  row.innerHTML = keyframeRowHtml();
+  if (keyframe) {
+    row.querySelector(".kf-time").value = keyframe.time_s;
+    if (keyframe.point_id) row.querySelector(".kf-point").value = keyframe.point_id;
+    if (keyframe.target_point) {
+      row.querySelector(".kf-x").value = keyframe.target_point.x;
+      row.querySelector(".kf-y").value = keyframe.target_point.y;
+      row.querySelector(".kf-z").value = keyframe.target_point.z;
+    }
+    if (keyframe.dimmer !== null && keyframe.dimmer !== undefined) row.querySelector(".kf-dimmer").value = keyframe.dimmer;
+  }
+  row.querySelector(".kf-remove").onclick = () => row.remove();
+  container.appendChild(row);
+}
+
+function collectKeyframes(container) {
+  return [...container.querySelectorAll(".keyframe-row")].map((row) => {
+    const time_s = Number(row.querySelector(".kf-time").value) || 0;
+    const pointId = row.querySelector(".kf-point").value;
+    const x = row.querySelector(".kf-x").value;
+    const y = row.querySelector(".kf-y").value;
+    const z = row.querySelector(".kf-z").value;
+    const dimmerVal = row.querySelector(".kf-dimmer").value;
+    const kf = { time_s };
+    if (pointId) kf.point_id = pointId;
+    else if (x !== "" && y !== "" && z !== "") kf.target_point = { x: Number(x), y: Number(y), z: Number(z) };
+    if (dimmerVal !== "") kf.dimmer = Number(dimmerVal);
+    return kf;
+  });
+}
+
+function animationEditorHtml() {
+  return `
+    <label>Name <input class="anim-name" type="text" placeholder="Sweep"></label>
+    <label>Target <select class="anim-target"></select></label>
+    <label><input class="anim-loop" type="checkbox" checked> Loop</label>
+    <label>Start offset (s) -- for staging the same pattern per fixture <input class="anim-offset" type="number" step="0.1" value="0"></label>
+    <div class="anim-keyframes"></div>
+    <button type="button" class="anim-add-kf wide-btn">+ Add keyframe</button>
+    <div class="btn-row">
+      <button class="anim-save">Save</button>
+      <button class="anim-cancel">Cancel</button>
+    </div>
+  `;
+}
+
+// The desktop UI's authoring model (and this one) edits ONE track per
+// Animation. An animation with other tracks (e.g. built some other way)
+// keeps those tracks untouched -- only the first is shown/edited here --
+// so saving never silently deletes a track this simple editor can't show.
+function openAnimationEditor(animation) {
+  const editor = document.getElementById("anim-editor");
+  editor.innerHTML = animationEditorHtml();
+  editor.classList.remove("hidden");
+  const track = animation?.tracks?.[0];
+  populateTargetSelect(editor.querySelector(".anim-target"), track?.target_id);
+  const kfContainer = editor.querySelector(".anim-keyframes");
+  if (animation) {
+    editor.querySelector(".anim-name").value = animation.name;
+    editor.querySelector(".anim-loop").checked = animation.loop;
+    editor.querySelector(".anim-offset").value = track?.time_offset_s || 0;
+    for (const kf of track?.keyframes || []) addKeyframeRow(kfContainer, kf);
+  }
+  editor.querySelector(".anim-add-kf").onclick = () => addKeyframeRow(kfContainer);
+  editor.querySelector(".anim-cancel").onclick = () => editor.classList.add("hidden");
+  editor.querySelector(".anim-save").onclick = async () => {
+    const newTrack = {
+      target_id: editor.querySelector(".anim-target").value,
+      keyframes: collectKeyframes(kfContainer),
+      time_offset_s: Number(editor.querySelector(".anim-offset").value) || 0,
+    };
+    const otherTracks = (animation?.tracks || []).slice(1);
+    await api.saveAnimation({
+      id: animation?.id,
+      name: editor.querySelector(".anim-name").value || "Animation",
+      loop: editor.querySelector(".anim-loop").checked,
+      tracks: [newTrack, ...otherTracks],
+    });
+    editor.classList.add("hidden");
+    renderAnimList();
+  };
+}
+
+async function renderAnimList() {
+  const container = document.getElementById("anim-list");
+  const animations = await api.listAnimations();
+  container.innerHTML = "";
+  for (const anim of animations) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `<span>${anim.name}</span>`;
+    const playBtn = document.createElement("button");
+    playBtn.textContent = "Play";
+    playBtn.onclick = () => api.playAnimation(anim.id).catch(console.error);
+    const stopBtn = document.createElement("button");
+    stopBtn.textContent = "Stop";
+    stopBtn.onclick = () => api.stopAnimation(anim.id).catch(console.error);
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Edit";
+    editBtn.onclick = () => openAnimationEditor(anim);
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "Delete";
+    delBtn.onclick = async () => { await api.deleteAnimation(anim.id); renderAnimList(); };
+    row.append(playBtn, stopBtn, editBtn, delBtn);
+    container.appendChild(row);
+  }
+  if (animations.length === 0) container.innerHTML = '<div class="hint">No animations yet.</div>';
+}
+
+function initShowsDrawer() {
+  for (const btn of document.querySelectorAll("#drawer-shows .subtab-btn")) {
+    btn.onclick = () => {
+      for (const b of document.querySelectorAll("#drawer-shows .subtab-btn")) b.classList.toggle("active", b === btn);
+      for (const pane of document.querySelectorAll("#drawer-shows .subtab-pane")) {
+        pane.classList.toggle("hidden", pane.dataset.subtabPane !== btn.dataset.subtab);
+      }
+    };
+  }
+  document.getElementById("anim-new").onclick = () => openAnimationEditor(null);
+  document.getElementById("pattern-new").onclick = () => openPatternEditor(null);
+  document.getElementById("pt-add").onclick = submitPoint;
+}
+
+// -------------------------------------------------------------- sound drawer
+
+async function refreshSoundDevices() {
+  const select = document.getElementById("sound-device");
+  try {
+    const devices = await api.audioDevices();
+    const status = await api.audioStatus();
+    select.innerHTML = "";
+    for (const d of devices) {
+      const opt = document.createElement("option");
+      opt.value = d.id; opt.textContent = d.name;
+      select.appendChild(opt);
+    }
+    if (status.device) select.value = status.device.id;
+    select.onchange = () => api.audioSelect(select.value).catch(console.error);
+  } catch {
+    select.innerHTML = '<option value="">(unavailable)</option>';
+  }
+}
+
+async function renderSoundStatus() {
+  const el = document.getElementById("sound-status");
+  try {
+    const status = await api.audioStatus();
+    el.textContent = status.capture.running
+      ? `Listening to ${status.capture.device_name || "input"}`
+      : "Stopped";
+  } catch {
+    el.textContent = "Sound-to-light not available.";
+  }
+}
+
+function initSoundDrawer() {
+  document.getElementById("sound-start").onclick = () => api.audioStart().then(renderSoundStatus).catch(renderSoundStatus);
+  document.getElementById("sound-stop").onclick = () => api.audioStop().then(renderSoundStatus).catch(renderSoundStatus);
+}
+
+// -------------------------------------------------------------- more drawer
+
+async function renderMoreDmxStatus() {
   const el = document.getElementById("more-dmx-status");
   try {
     const status = await api.dmxStatus();
@@ -365,25 +608,9 @@ async function renderDmxStatus() {
   }
 }
 
-async function renderSoundStatus() {
-  const el = document.getElementById("more-sound-status");
-  try {
-    const status = await api.audioStatus();
-    el.textContent = status.capture.running
-      ? `Listening to ${status.capture.device_name || "input"}`
-      : "Stopped";
-  } catch {
-    el.textContent = "Sound-to-light not available.";
-  }
-}
-
-function initMoreScreen() {
+function initMoreDrawer() {
   document.getElementById("btn-dmx-reconnect").onclick = () =>
-    api.dmxReconnect().then(renderDmxStatus).catch(renderDmxStatus);
-  document.getElementById("btn-sound-start").onclick = () =>
-    api.audioStart().then(renderSoundStatus).catch(renderSoundStatus);
-  document.getElementById("btn-sound-stop").onclick = () =>
-    api.audioStop().then(renderSoundStatus).catch(renderSoundStatus);
+    api.dmxReconnect().then(renderMoreDmxStatus).catch(renderMoreDmxStatus);
 }
 
 // -------------------------------------------------------------- top bar
@@ -403,13 +630,6 @@ function updateDmxPill() {
   }
 }
 
-function initClearSelection() {
-  document.getElementById("btn-clear-selection").onclick = () => {
-    state.selection.clear();
-    notifyStateChange();
-  };
-}
-
 function initBlackout() {
   document.getElementById("btn-blackout").onclick = () => {
     if (confirm("Blackout all fixtures?")) api.blackout().catch(console.error);
@@ -419,18 +639,20 @@ function initBlackout() {
 // -------------------------------------------------------------- bootstrap
 
 async function bootstrap() {
-  initTabs();
-  initColorCard();
+  initDrawers();
+  initMainTabs();
+  initClearSelection();
+  initColorScreen();
   initDimmerStrobeCard();
   initPanTiltPad();
-  initAimCanvas();
-  initMoreScreen();
-  initClearSelection();
+  initShowsDrawer();
+  initSoundDrawer();
+  initMoreDrawer();
   initBlackout();
 
   onStateChange(() => {
-    renderSelectScreen();
-    renderSelectionBars();
+    renderLightsDrawer();
+    document.getElementById("selection-bar").textContent = selectionSummaryText();
     renderCustomCard();
     updateDmxPill();
   });
@@ -446,7 +668,6 @@ async function bootstrap() {
   });
 
   notifyStateChange();
-  showScreen("select");
 }
 
 bootstrap().catch((err) => {

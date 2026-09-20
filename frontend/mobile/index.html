@@ -4,7 +4,28 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
   <title>DMX Controller — Mobile</title>
+  <script>
+    // Mirror of the check in the desktop index.html: send anything that
+    // isn't phone-sized back to the desktop UI, so a tablet (or a phone
+    // rotated to landscape -- hence min(width,height), not width alone)
+    // never gets stuck here. One-time decision at load, no manual toggle.
+    (function () {
+      var PHONE_BREAKPOINT = 700;
+      var isPhoneSized = Math.min(window.innerWidth, window.innerHeight) < PHONE_BREAKPOINT;
+      if (!isPhoneSized) {
+        location.replace("/" + location.search);
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/mobile/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/build/three.module.js",
+        "three/addons/": "/vendor/three/examples/jsm/"
+      }
+    }
+  </script>
 </head>
 <body>
   <div id="app">
@@ -15,113 +36,155 @@
       <button id="btn-blackout" class="danger-btn">BLACKOUT</button>
     </header>
 
-    <main id="content">
-      <!-- SELECT -->
-      <section id="screen-select" class="screen">
-        <h2>Groups</h2>
-        <div id="group-buttons" class="tile-grid"></div>
-        <h2>Fixtures</h2>
-        <div id="fixture-buttons" class="tile-grid"></div>
-        <button id="btn-clear-selection" class="wide-btn">Clear selection</button>
-      </section>
+    <div id="body">
+      <!-- Left-edge drawer tabs: always visible, independent of which main
+           screen (Color/Control/Aim) is showing -- these are menus, not a
+           screen you navigate away from, so they slide open over the
+           content and back rather than replacing it. -->
+      <div id="drawer-tabs">
+        <button class="drawer-tab" data-drawer="lights">Lights</button>
+        <button class="drawer-tab" data-drawer="shows">Shows</button>
+        <button class="drawer-tab" data-drawer="sound">Sound</button>
+        <button class="drawer-tab" data-drawer="more">More</button>
+      </div>
 
-      <!-- CONTROL -->
-      <section id="screen-control" class="screen hidden">
-        <div id="control-selection-bar" class="selection-bar">Nothing selected</div>
+      <div id="drawer-backdrop" class="hidden"></div>
 
-        <details class="card" open>
-          <summary>Color</summary>
-          <div class="card-body">
-            <div class="swatch-grid" id="rgb-palette"></div>
-            <label>Red <input type="range" min="0" max="255" value="0" id="rgb-red"></label>
-            <label>Green <input type="range" min="0" max="255" value="0" id="rgb-green"></label>
-            <label>Blue <input type="range" min="0" max="255" value="0" id="rgb-blue"></label>
-            <label>White <input type="range" min="0" max="255" value="0" id="rgb-white"></label>
+      <aside id="drawer" class="hidden">
+        <div class="drawer-header">
+          <span id="drawer-title"></span>
+          <button id="drawer-close">Close</button>
+        </div>
+        <div class="drawer-body">
+          <!-- LIGHTS -->
+          <div id="drawer-lights" class="drawer-pane hidden">
+            <h3>Groups</h3>
+            <div id="group-buttons" class="tile-grid"></div>
+            <h3>Fixtures</h3>
+            <div id="fixture-buttons" class="tile-grid"></div>
+            <button id="btn-clear-selection" class="wide-btn">Clear selection</button>
           </div>
-        </details>
 
-        <details class="card" open>
-          <summary>Dimmer &amp; Strobe</summary>
-          <div class="card-body">
-            <label>Dimmer <span class="pct" id="dimmer-pct">100%</span>
-              <input type="range" min="0" max="100" value="100" id="dimmer-slider">
-            </label>
-            <label>Strobe <span class="pct" id="strobe-pct">0%</span>
-              <input type="range" min="0" max="100" value="0" id="strobe-slider">
+          <!-- SHOWS (path animations / patterns / points) -->
+          <div id="drawer-shows" class="drawer-pane hidden">
+            <div class="subtab-bar">
+              <button type="button" class="subtab-btn active" data-subtab="show-animations">Animations</button>
+              <button type="button" class="subtab-btn" data-subtab="show-patterns">Patterns</button>
+              <button type="button" class="subtab-btn" data-subtab="show-points">Points</button>
+            </div>
+
+            <div class="subtab-pane" data-subtab-pane="show-animations">
+              <div id="anim-list" class="list"></div>
+              <button id="anim-new" class="wide-btn">+ New animation</button>
+              <div id="anim-editor" class="editor hidden"></div>
+            </div>
+
+            <div class="subtab-pane hidden" data-subtab-pane="show-patterns">
+              <div id="pattern-list" class="list"></div>
+              <button id="pattern-new" class="wide-btn">+ New pattern</button>
+              <div id="pattern-editor" class="editor hidden"></div>
+            </div>
+
+            <div class="subtab-pane hidden" data-subtab-pane="show-points">
+              <div id="pt-list" class="list"></div>
+              <div class="editor">
+                <label>Name <input id="pt-name" type="text" placeholder="Stage left"></label>
+                <label>X <input id="pt-x" type="number" step="0.1" value="0"></label>
+                <label>Y <input id="pt-y" type="number" step="0.1" value="0"></label>
+                <label>Z <input id="pt-z" type="number" step="0.1" value="1.5"></label>
+                <button id="pt-add" class="wide-btn">+ Add point</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- SOUND -->
+          <div id="drawer-sound" class="drawer-pane hidden">
+            <div id="sound-status" class="hint">Loading...</div>
+            <label>Input device
+              <select id="sound-device"></select>
             </label>
             <div class="btn-row">
-              <button data-strobe="0">Off</button>
-              <button data-strobe="30">Slow</button>
-              <button data-strobe="60">Med</button>
-              <button data-strobe="100">Max</button>
-            </div>
-            <div class="btn-row">
-              <button id="shutter-closed">Closed</button>
-              <button id="shutter-open">Open</button>
+              <button id="sound-start">Start</button>
+              <button id="sound-stop">Stop</button>
             </div>
           </div>
-        </details>
 
-        <details class="card">
-          <summary>Pan / Tilt (manual)</summary>
-          <div class="card-body">
-            <div class="hint">Drag inside the pad. For room-accurate aiming, use the Aim tab instead.</div>
-            <div class="xy-pad" id="xy-pad"><div class="xy-dot" id="xy-dot"></div></div>
+          <!-- MORE -->
+          <div id="drawer-more" class="drawer-pane hidden">
+            <h3>DMX Output</h3>
+            <div id="more-dmx-status" class="hint">Loading...</div>
+            <button id="btn-dmx-reconnect" class="wide-btn">Reconnect</button>
+            <h3>Desktop UI</h3>
+            <a class="wide-btn" href="/">Open full desktop UI</a>
           </div>
-        </details>
+        </div>
+      </aside>
 
-        <details class="card" id="custom-card">
-          <summary>Custom channels</summary>
-          <div class="card-body" id="custom-sliders">
-            <div class="hint">Select a fixture with custom channels to see sliders here.</div>
-          </div>
-        </details>
-      </section>
-
-      <!-- AIM -->
-      <section id="screen-aim" class="screen hidden">
-        <div id="aim-selection-bar" class="selection-bar">Nothing selected</div>
-        <div class="hint">Tap the floor plan to aim the current selection there.</div>
-        <canvas id="aim-canvas" width="360" height="360"></canvas>
-        <label>Aim height (m) <span id="aim-height-val">1.5</span>
-          <input type="range" id="aim-height" min="0" max="4" step="0.1" value="1.5">
-        </label>
-      </section>
-
-      <!-- SHOWS -->
-      <section id="screen-shows" class="screen hidden">
-        <h2>Animations</h2>
-        <div id="anim-list" class="list"></div>
-        <h2>Patterns</h2>
-        <div id="pattern-list" class="list"></div>
-        <div class="hint">Create/edit animations, patterns and 3D points from the desktop UI.</div>
-      </section>
-
-      <!-- MORE -->
-      <section id="screen-more" class="screen hidden">
-        <h2>DMX Output</h2>
-        <div id="more-dmx-status" class="hint">Loading...</div>
-        <button id="btn-dmx-reconnect" class="wide-btn">Reconnect</button>
-
-        <h2>Sound-to-light</h2>
-        <div id="more-sound-status" class="hint">Loading...</div>
-        <div class="btn-row">
-          <button id="btn-sound-start">Start</button>
-          <button id="btn-sound-stop">Stop</button>
+      <main id="content">
+        <div id="main-tabs">
+          <button class="main-tab active" data-screen="color">Color</button>
+          <button class="main-tab" data-screen="control">Control</button>
+          <button class="main-tab" data-screen="aim">Aim</button>
         </div>
 
-        <h2>Desktop UI</h2>
-        <a class="wide-btn" href="/">Open full desktop UI</a>
-      </section>
-    </main>
+        <div id="selection-bar" class="selection-bar">Nothing selected</div>
 
-    <nav id="tabbar">
-      <button class="tab active" data-screen="select">Select</button>
-      <button class="tab" data-screen="control">Control</button>
-      <button class="tab" data-screen="aim">Aim</button>
-      <button class="tab" data-screen="shows">Shows</button>
-      <button class="tab" data-screen="more">More</button>
-    </nav>
+        <!-- COLOR -->
+        <section id="screen-color" class="screen">
+          <div class="swatch-grid" id="rgb-palette"></div>
+          <label>Red <input type="range" min="0" max="255" value="0" id="rgb-red"></label>
+          <label>Green <input type="range" min="0" max="255" value="0" id="rgb-green"></label>
+          <label>Blue <input type="range" min="0" max="255" value="0" id="rgb-blue"></label>
+          <label>White <input type="range" min="0" max="255" value="0" id="rgb-white"></label>
+        </section>
+
+        <!-- CONTROL -->
+        <section id="screen-control" class="screen hidden">
+          <details class="card" open>
+            <summary>Dimmer &amp; Strobe</summary>
+            <div class="card-body">
+              <label>Dimmer <span class="pct" id="dimmer-pct">100%</span>
+                <input type="range" min="0" max="100" value="100" id="dimmer-slider">
+              </label>
+              <label>Strobe <span class="pct" id="strobe-pct">0%</span>
+                <input type="range" min="0" max="100" value="0" id="strobe-slider">
+              </label>
+              <div class="btn-row">
+                <button data-strobe="0">Off</button>
+                <button data-strobe="30">Slow</button>
+                <button data-strobe="60">Med</button>
+                <button data-strobe="100">Max</button>
+              </div>
+              <div class="btn-row">
+                <button id="shutter-closed">Closed</button>
+                <button id="shutter-open">Open</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="card" open>
+            <summary>Pan / Tilt (manual)</summary>
+            <div class="card-body">
+              <div class="hint">Drag inside the pad. For room-accurate aiming, use the Aim screen instead.</div>
+              <div class="xy-pad" id="xy-pad"><div class="xy-dot" id="xy-dot"></div></div>
+            </div>
+          </details>
+
+          <details class="card" id="custom-card">
+            <summary>Custom channels</summary>
+            <div class="card-body" id="custom-sliders">
+              <div class="hint">Select a fixture with custom channels to see sliders here.</div>
+            </div>
+          </details>
+        </section>
+
+        <!-- AIM (3D) -->
+        <section id="screen-aim" class="screen hidden">
+          <div class="hint">Drag to orbit, pinch to zoom, tap a surface to aim the current selection there.</div>
+          <div id="aim3d-container"></div>
+        </section>
+      </main>
+    </div>
   </div>
 
   <script type="module" src="/mobile/app.js"></script>

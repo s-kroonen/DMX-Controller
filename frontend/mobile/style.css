@@ -16,6 +16,7 @@ html, body, #app {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  overflow: hidden;
 }
 
 #app { display: flex; flex-direction: column; }
@@ -28,6 +29,7 @@ html, body, #app {
   padding-top: max(10px, env(safe-area-inset-top));
   background: var(--panel-bg);
   border-bottom: 1px solid var(--panel-border);
+  flex-shrink: 0;
 }
 .brand { font-weight: bold; font-size: 1.1em; }
 .spacer { flex: 1; }
@@ -36,32 +38,118 @@ html, body, #app {
 .status-pill.ok { background: #1f4d2b; }
 .status-pill.error { background: #4d1f1f; }
 
-#content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px;
-  padding-bottom: 24px;
-}
+#body { flex: 1; display: flex; min-height: 0; position: relative; }
 
-.screen.hidden { display: none; }
-.screen h2 { font-size: 0.85em; color: var(--text-dim); text-transform: uppercase; margin: 16px 0 8px; }
-.screen h2:first-child { margin-top: 0; }
+/* ---- left-edge drawer tabs + sliding drawer ------------------------- */
 
-#tabbar {
+#drawer-tabs {
   display: flex;
+  flex-direction: column;
+  width: 64px;
+  flex-shrink: 0;
   background: var(--panel-bg);
-  border-top: 1px solid var(--panel-border);
-  padding-bottom: env(safe-area-inset-bottom);
+  border-right: 1px solid var(--panel-border);
+  padding-top: 8px;
+  gap: 4px;
+  z-index: 20;
 }
-.tab {
-  flex: 1;
+.drawer-tab {
+  width: 100%;
   background: transparent;
   border: none;
   color: var(--text-dim);
-  padding: 12px 4px;
-  font-size: 0.8em;
+  padding: 8px 2px;
+  font-size: 0.68em;
+  line-height: 1.15;
+  border-radius: 0;
+  min-height: 48px;
+  /* Labels are one word each ("Lights", "Shows", ...) and the column is
+     narrow -- letting a too-wide word wrap (even mid-word) keeps it fully
+     visible on two lines instead of overflowing and getting clipped, which
+     with centered text silently eats the START of the word, not the end. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
-.tab.active { color: var(--accent); font-weight: bold; }
+.drawer-tab.active { color: var(--accent); font-weight: bold; border-left: 3px solid var(--accent); }
+
+#drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  left: 64px;
+  background: rgba(0,0,0,0.4);
+  z-index: 25;
+}
+#drawer-backdrop.hidden { display: none; }
+
+#drawer {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 64px;
+  width: min(85vw, 360px);
+  background: var(--panel-bg);
+  border-right: 1px solid var(--panel-border);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(0);
+  transition: transform 0.15s ease;
+}
+/* -100% clears the drawer's own width, but it also sits at left:64px (next
+   to the tab strip) -- without clearing that offset too, the "closed"
+   drawer still overlaps and (at z-index 30 > the tab strip's 20) visually
+   covers the left edge of the tab labels despite being pointer-events:none. */
+#drawer.hidden { transform: translateX(calc(-100% - 64px)); pointer-events: none; }
+
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--panel-border);
+  font-weight: bold;
+  flex-shrink: 0;
+}
+.drawer-body { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.drawer-pane.hidden { display: none; }
+.drawer-pane h3 { font-size: 0.8em; color: var(--text-dim); text-transform: uppercase; margin: 14px 0 6px; }
+.drawer-pane h3:first-child { margin-top: 0; }
+
+/* ---- main content: segmented tabs + screens ------------------------- */
+
+#content { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+
+#main-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  flex-shrink: 0;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--panel-border);
+}
+.main-tab {
+  flex: 1;
+  background: #2a2f36;
+  border: 1px solid var(--panel-border);
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 10px 4px;
+  min-height: 40px;
+}
+.main-tab.active { background: var(--accent); border-color: var(--accent); color: var(--text); font-weight: bold; }
+
+.selection-bar {
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--panel-border);
+  padding: 8px 12px;
+  font-size: 0.85em;
+  flex-shrink: 0;
+}
+
+.screen { flex: 1; overflow-y: auto; padding: 12px; }
+.screen.hidden { display: none; }
+
+/* ---- shared bits ------------------------------------------------------ */
 
 button, .wide-btn {
   background: #2a2f36;
@@ -79,33 +167,36 @@ button, .wide-btn {
 .wide-btn { display: block; width: 100%; margin: 8px 0; }
 .danger-btn { background: var(--danger); border-color: var(--danger); font-weight: bold; }
 
+select, input[type=text], input[type=number] {
+  background: #14161a;
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 8px;
+  width: 100%;
+  min-height: 40px;
+  font-size: 0.95em;
+}
+
+label { display: block; margin: 10px 0; font-size: 0.85em; }
+input[type=range] { width: 100%; height: 32px; }
+
 .tile-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
   gap: 8px;
+  margin-bottom: 8px;
 }
 .tile-btn {
-  min-height: 56px;
+  min-height: 52px;
   border-radius: 10px;
   border: 2px solid transparent;
   background: #2a2f36;
   color: var(--text);
-  font-size: 0.85em;
+  font-size: 0.82em;
   padding: 6px;
 }
 .tile-btn.selected { border-color: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.6); }
-
-.selection-bar {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin-bottom: 12px;
-  font-size: 0.9em;
-  position: sticky;
-  top: 0;
-  z-index: 2;
-}
 
 .card {
   background: var(--panel-bg);
@@ -114,18 +205,11 @@ button, .wide-btn {
   margin-bottom: 10px;
   overflow: hidden;
 }
-.card summary {
-  padding: 12px 14px;
-  font-weight: bold;
-  cursor: pointer;
-  list-style: none;
-}
+.card summary { padding: 12px 14px; font-weight: bold; cursor: pointer; list-style: none; }
 .card summary::-webkit-details-marker { display: none; }
 .card summary::after { content: "▾"; float: right; color: var(--text-dim); }
 .card[open] summary::after { content: "▴"; }
 .card-body { padding: 4px 14px 14px; }
-.card-body label { display: block; margin: 10px 0; font-size: 0.85em; }
-.card-body input[type=range] { width: 100%; height: 32px; }
 
 .swatch-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .swatch-grid div { width: 36px; height: 36px; border-radius: 8px; border: 1px solid #000; }
@@ -152,24 +236,24 @@ button, .wide-btn {
   pointer-events: none;
 }
 
-#aim-canvas {
+#aim3d-container {
+  position: relative;
   width: 100%;
-  max-width: 480px;
-  aspect-ratio: 1;
-  background: #0e1013;
+  height: calc(100% - 40px);
+  min-height: 300px;
   border: 1px solid var(--panel-border);
   border-radius: 10px;
-  display: block;
-  margin: 0 auto 12px;
+  overflow: hidden;
   touch-action: none;
 }
+#aim3d-container canvas { display: block; width: 100%; height: 100%; }
 
 .list .row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 6px;
-  background: var(--panel-bg);
+  background: #14161a;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   padding: 8px 10px;
@@ -177,7 +261,27 @@ button, .wide-btn {
   font-size: 0.85em;
 }
 .list .row span { flex: 1; }
-.list .row button { padding: 6px 10px; font-size: 0.85em; min-height: 36px; }
+.list .row button { padding: 6px 10px; font-size: 0.8em; min-height: 36px; }
+
+.subtab-bar { display: flex; gap: 4px; margin-bottom: 10px; }
+.subtab-btn { flex: 1; font-size: 0.75em; padding: 8px 4px; background: #14161a; }
+.subtab-btn.active { background: var(--accent); border-color: var(--accent); }
+.subtab-pane.hidden { display: none; }
+
+.editor {
+  background: #14161a;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 10px;
+  margin-top: 8px;
+}
+.editor.hidden { display: none; }
+.keyframe-row {
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px;
+  margin: 8px 0;
+}
 
 .hint { font-size: 0.8em; color: var(--text-dim); margin: 6px 0; }
 .pct { opacity: 0.7; font-variant-numeric: tabular-nums; margin-left: 6px; }

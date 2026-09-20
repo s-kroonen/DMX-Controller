@@ -4,6 +4,21 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DMX Controller</title>
+  <script>
+    // Auto-detect phone vs tablet/desktop on initial load and send phones to
+    // the dedicated mobile UI -- min(width,height) so rotating a phone to
+    // landscape doesn't flip it over to the desktop layout it can't really
+    // drive (floating windows + a 3D scene need more room than a phone has).
+    // Tablets stay here on purpose. No manual toggle: this is a one-time
+    // decision at load, not a live relayout while resizing a desktop window.
+    (function () {
+      var PHONE_BREAKPOINT = 700;
+      var isPhoneSized = Math.min(window.innerWidth, window.innerHeight) < PHONE_BREAKPOINT;
+      if (isPhoneSized && location.pathname.indexOf("/mobile/") !== 0) {
+        location.replace("/mobile/" + location.search);
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/src/style.css" />
   <script type="importmap">
     {
@@ -33,7 +48,6 @@
       <button id="btn-safety-zones" class="toggle-btn">Safety Zones</button>
       <button id="btn-animations" class="toggle-btn">Animations</button>
       <button id="btn-sound" class="toggle-btn">Sound</button>
-      <a href="/mobile/" class="toggle-btn" id="btn-mobile-ui">Mobile UI</a>
       <button id="btn-blackout" class="danger-btn">BLACKOUT</button>
     </header>
 

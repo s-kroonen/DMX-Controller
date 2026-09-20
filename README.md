@@ -275,21 +275,46 @@ Open the **Sound** window (top bar). It works like Freestyler's audio section:
 API: `GET /api/audio/devices|status|function-types`, `POST /api/audio/select|start|stop|config|tap|bpm` (`config` takes `sound_mode`),
 `POST|PATCH|DELETE /api/audio/functions`.
 
-- **Mobile UI** (`frontend/mobile/`, served at `/mobile/` -- linked from the
-  desktop UI's top bar): the desktop UI's floating windows and 3D scene need
-  more screen than a phone has, so this is a deliberately different layout
-  rather than a squeezed-down copy -- one full-screen tab at a time (bottom
-  nav: **Select / Control / Aim / Shows / More**) instead of overlaid
-  windows, and a flat top-down 2D floor plan instead of the 3D view (tap
-  it to aim the current selection, with an aim-height slider, using the
-  same room-space `aim` endpoint). Control groups RGB/dimmer-strobe/
-  pan-tilt/custom channels into collapsible cards on one screen; Shows
-  lists animations/patterns to play/stop (creating/editing them stays a
-  desktop task); More has DMX/sound status and a link back to the full
-  desktop UI. Blackout is pinned in the top bar on every screen. Reuses
-  the same backend and the same `api.js`/`state.js`/`main_data.js`
-  modules as the desktop UI (imported directly, no duplicated fetch/state
-  logic) -- only the DOM/layout is different.
+- **Mobile UI** (`frontend/mobile/`, served at `/mobile/`): the desktop
+  UI's floating windows and 3D scene need more screen than a phone has, so
+  this is a deliberately different layout rather than a squeezed-down
+  copy. A phone is routed here **automatically** -- an inline script in
+  both `index.html`s checks `min(innerWidth, innerHeight)` against a
+  700px breakpoint once at load and redirects if it doesn't match (a
+  tablet stays on the desktop UI; a phone rotated to landscape doesn't
+  flip back to it, since the check uses the smaller dimension). There is
+  no manual toggle button -- just an "Open full desktop UI" link tucked
+  in the More menu as an escape hatch.
+  - **Left-edge drawer tabs** (Lights / Shows / Sound / More) are menus,
+    not screens you navigate away from -- tapping one slides a panel in
+    over the current screen and back, so picking a different light (or
+    checking sound status) never loses your place on, say, the Aim
+    screen. Lights is the group/fixture picker; Sound has an input
+    device picker plus start/stop; More has DMX status/reconnect and the
+    desktop-UI link.
+  - **Shows** is where animations and patterns are actually authored on
+    mobile now, not just played -- three sub-tabs (Animations / Patterns
+    / Points) each with a list (play/stop/edit/delete) and a full edit
+    form that replaces the list in place (list-\>detail navigation within
+    the drawer). Target pickers are a `<select>` of every group/fixture
+    instead of a raw id field.
+  - **Color** and **Control** are separate main screens (segmented
+    control alongside Aim) -- Color is just RGBW; Control has
+    dimmer/strobe, a manual pan/tilt pad (pointer events, so it works for
+    touch and mouse alike), and custom channels.
+  - **Aim** is a real 3D view (`frontend/mobile/aim3d.js`), not a flat 2D
+    floor plan with a height slider -- orbit/pinch to look around, tap
+    any floor/wall/ceiling surface to aim the current selection there,
+    through the same room-space `aim` endpoint the desktop 3D view uses.
+    It's a separate, deliberately minimal module (not a reuse of the
+    desktop's `scene3d.js`) with no gizmo/dragging -- repositioning
+    fixtures stays a desktop task, so mobile's 3D view never risks
+    depending on (or breaking) that shared, more complex code.
+  - Reuses the same backend and the same `api.js`/`state.js`/
+    `main_data.js` modules as the desktop UI (imported directly, no
+    duplicated fetch/state logic) -- only the layout differs. Browser-mic
+    sound input and gyroscope-based aiming are deliberately deferred to
+    a later pass.
 
 ## Known limitations / next steps
 
