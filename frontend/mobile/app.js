@@ -2,6 +2,7 @@ import { api, connectWebSocket } from "../src/api.js";
 import { state, onStateChange, notifyStateChange } from "../src/state.js";
 import { loadInitialData } from "../src/main_data.js";
 import { initAim3D, resizeAim3D } from "./aim3d.js";
+import { logicalFromRaw } from "../src/roleRange.js";
 
 // A radically simpler surface for phones than the desktop UI: instead of
 // overlaid floating windows and a 3D scene that assume a lot of screen,
@@ -240,6 +241,8 @@ function initDimmerStrobeCard() {
   };
 }
 
+let padDragging = false;
+
 function initPanTiltPad() {
   const pad = document.getElementById("xy-pad");
   const dot = document.getElementById("xy-dot");
@@ -253,8 +256,73 @@ function initPanTiltPad() {
     const tilt = Math.round(fy * 255);
     currentTargetIds().forEach((id) => api.setPanTilt(id, pan, tilt).catch(console.error));
   };
-  pad.addEventListener("pointerdown", (e) => { pad.setPointerCapture(e.pointerId); setFromPad(e); });
+  pad.addEventListener("pointerdown", (e) => { padDragging = true; pad.setPointerCapture(e.pointerId); setFromPad(e); });
   pad.addEventListener("pointermove", (e) => { if (e.buttons || e.pressure > 0) setFromPad(e); });
+  pad.addEventListener("pointerup", () => { padDragging = false; });
+  pad.addEventListener("pointercancel", () => { padDragging = false; });
+}
+
+// ---- read-back sync: reflect a fixture's ACTUAL current values into the
+// Color/Control screens, mirroring panels.js on desktop, so a change made
+// elsewhere (the other UI, an animation, another phone) shows up here too.
+function isBeingEdited(el) {
+  return !!el && document.activeElement === el;
+}
+
+function representativeFixture() {
+  for (const id of state.expandedFixtureIds()) {
+    const fixture = state.fixtureById(id);
+    if (fixture) return fixture;
+  }
+  return null;
+}
+
+function syncControlsFromState() {
+  const fixture = representativeFixture();
+  if (!fixture) return;
+  const profile = state.profileById(fixture.profile_id);
+  const values = state.fixtureState[fixture.id]?.values;
+  if (!profile || !values) return;
+  syncRgbFromState(values);
+  syncStrobeFromState(profile, values);
+  syncPanTiltFromState(values);
+}
+
+function syncRgbFromState(values) {
+  const red = document.getElementById("rgb-red");
+  const green = document.getElementById("rgb-green");
+  const blue = document.getElementById("rgb-blue");
+  const white = document.getElementById("rgb-white");
+  if ([red, green, blue, white].some(isBeingEdited)) return;
+  if (red && "red" in values) red.value = values.red;
+  if (green && "green" in values) green.value = values.green;
+  if (blue && "blue" in values) blue.value = values.blue;
+  if (white && "white" in values) white.value = values.white;
+}
+
+function syncStrobeFromState(profile, values) {
+  const dimmerSlider = document.getElementById("dimmer-slider");
+  const strobeSlider = document.getElementById("strobe-slider");
+  if (isBeingEdited(dimmerSlider) || isBeingEdited(strobeSlider)) return;
+  if ("dimmer" in values) {
+    const logical = logicalFromRaw(profile, "dimmer", values.dimmer);
+    setPct("dimmer-slider", "dimmer-pct", Math.round((logical * 100) / 255));
+  }
+  if ("strobe" in values || "shutter" in values) {
+    const role = "strobe" in values ? "strobe" : "shutter";
+    const logical = logicalFromRaw(profile, role, values[role]);
+    setPct("strobe-slider", "strobe-pct", Math.round((logical * 100) / 255));
+  }
+}
+
+function syncPanTiltFromState(values) {
+  const pad = document.getElementById("xy-pad");
+  const dot = document.getElementById("xy-dot");
+  if (padDragging || !pad || !dot) return;
+  if ("pan" in values && "tilt" in values) {
+    dot.style.left = `${(values.pan / 255) * 100}%`;
+    dot.style.top = `${(values.tilt / 255) * 100}%`;
+  }
 }
 
 let lastCustomKey = "";
@@ -655,7 +723,14 @@ async function bootstrap() {
     document.getElementById("selection-bar").textContent = selectionSummaryText();
     renderCustomCard();
     updateDmxPill();
+    syncControlsFromState();
   });
+
+  // Desktop's sound panel polls continuously (sound.js); the drawer here
+  // only refreshed once on open, so status (and other sessions' start/stop)
+  // went stale while it stayed open. Poll the same way, but only while the
+  // sound drawer is actually visible, to skip needless requests otherwise.
+  setInterval(() => { if (openDrawer === "sound") renderSoundStatus(); }, 2000);
 
   await loadInitialData();
 

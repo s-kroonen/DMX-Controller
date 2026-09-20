@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { state, onStateChange } from "./state.js";
 import { initPanelWindows } from "./panelWindows.js";
+import { logicalFromRaw } from "./roleRange.js";
 
 function currentTargetIds() {
   return [...state.selection];
@@ -26,6 +27,77 @@ export function initPanels() {
   initPanTiltPanel();
 
   onStateChange(renderCustomPanel);
+  onStateChange(syncControlsFromState);
+}
+
+// ---- read-back sync: reflect a fixture's ACTUAL current values into the
+// controls, so a change made elsewhere (another session, an animation, a
+// page reload) shows up here too -- not just write-only sliders. Skips a
+// control the operator is actively touching so an incoming WS tick can't
+// yank a slider out from under a drag.
+function isBeingEdited(el) {
+  return !!el && document.activeElement === el;
+}
+
+function representativeFixture() {
+  for (const id of state.expandedFixtureIds()) {
+    const fixture = state.fixtureById(id);
+    if (fixture) return fixture;
+  }
+  return null;
+}
+
+function syncControlsFromState() {
+  const fixture = representativeFixture();
+  if (!fixture) return;
+  const profile = state.profileById(fixture.profile_id);
+  const values = state.fixtureState[fixture.id]?.values;
+  if (!profile || !values) return;
+  syncRgbFromState(values);
+  syncStrobeFromState(profile, values);
+  syncPanTiltFromState(profile, values);
+}
+
+function syncRgbFromState(values) {
+  const red = document.getElementById("rgb-red");
+  const green = document.getElementById("rgb-green");
+  const blue = document.getElementById("rgb-blue");
+  const white = document.getElementById("rgb-white");
+  if ([red, green, blue, white].some(isBeingEdited)) return;
+  if (red && "red" in values) red.value = values.red;
+  if (green && "green" in values) green.value = values.green;
+  if (blue && "blue" in values) blue.value = values.blue;
+  if (white && "white" in values) white.value = values.white;
+}
+
+function syncStrobeFromState(profile, values) {
+  const dimmerSlider = document.getElementById("strobe-dimmer-slider");
+  const strobeSlider = document.getElementById("strobe-slider");
+  if (isBeingEdited(dimmerSlider) || isBeingEdited(strobeSlider)) return;
+  if ("dimmer" in values) {
+    const logical = logicalFromRaw(profile, "dimmer", values.dimmer);
+    setDimmerUi(Math.round((logical * 100) / 255));
+  }
+  if ("strobe" in values || "shutter" in values) {
+    const raw = "strobe" in values ? values.strobe : values.shutter;
+    const role = "strobe" in values ? "strobe" : "shutter";
+    const logical = logicalFromRaw(profile, role, raw);
+    setStrobeUi(Math.round((logical * 100) / 255));
+  }
+}
+
+function syncPanTiltFromState(profile, values) {
+  const pan = document.getElementById("pan-slider");
+  const tilt = document.getElementById("tilt-slider");
+  const pad = document.getElementById("xy-pad");
+  const dot = document.getElementById("xy-dot");
+  if (isBeingEdited(pan) || isBeingEdited(tilt) || padDragging) return;
+  if (pan && "pan" in values) pan.value = values.pan;
+  if (tilt && "tilt" in values) tilt.value = values.tilt;
+  if (pad && dot && "pan" in values && "tilt" in values) {
+    dot.style.left = `${(values.pan / 255) * 100}%`;
+    dot.style.top = `${(values.tilt / 255) * 100}%`;
+  }
 }
 
 function initRgbPanel() {
@@ -157,6 +229,8 @@ function initStrobePanel() {
   document.getElementById("shutter-open").onclick = () => onShutter(false);
 }
 
+let padDragging = false;
+
 function initPanTiltPanel() {
   const pan = document.getElementById("pan-slider");
   const panFine = document.getElementById("pan-fine-slider");
@@ -184,10 +258,9 @@ function initPanTiltPanel() {
     pushPanTilt();
   }
 
-  let dragging = false;
-  pad.addEventListener("mousedown", (e) => { dragging = true; setFromPad(e); });
-  window.addEventListener("mousemove", (e) => { if (dragging) setFromPad(e); });
-  window.addEventListener("mouseup", () => { dragging = false; });
+  pad.addEventListener("mousedown", (e) => { padDragging = true; setFromPad(e); });
+  window.addEventListener("mousemove", (e) => { if (padDragging) setFromPad(e); });
+  window.addEventListener("mouseup", () => { padDragging = false; });
 }
 
 let lastCustomPanelKey = "";

@@ -150,8 +150,8 @@ function rebuildRoomShell() {
 }
 
 // Mirrors scene3d.js's updateFixtures() -- same body model, same
-// yaw/pitch/roll composition, same beam ("light path") math -- minus the
-// gizmo drag-skip branches, since nothing here ever drags a fixture.
+// yaw/pitch/mount/roll composition, same beam ("light path") math -- minus
+// the gizmo drag-skip branches, since nothing here ever drags a fixture.
 function updateFixtures() {
   const currentIds = new Set(state.room.fixtures.map((f) => f.id));
   for (const [id, entry] of fixtureMeshes) {
@@ -179,6 +179,11 @@ function updateFixtures() {
     entry.group.rotation.z = -yawRad;
     const pitchRad = THREE.MathUtils.degToRad(fixture.orientation?.pitch_deg ?? 180);
     entry.pitchGroup.rotation.x = pitchRad - Math.PI / 2;
+    if (entry.isMovingHead) {
+      const pitchDeg = ((fixture.orientation?.pitch_deg ?? 180) % 360 + 360) % 360;
+      const flip = Math.cos(THREE.MathUtils.degToRad(pitchDeg)) > 1e-9 || Math.abs(pitchDeg - 90) < 1e-6;
+      entry.mountGroup.rotation.y = flip ? Math.PI : 0;
+    }
     entry.rollGroup.rotation.y = THREE.MathUtils.degToRad(fixture.orientation?.roll_deg || 0);
 
     entry.bodyMaterial.color.set(state.isSelected(fixture.id) ? 0xffffff : entry.bodyMaterial.userData.baseColor);
@@ -198,32 +203,16 @@ function updateFixtures() {
         fixtureState.last_target.x, fixtureState.last_target.y, fixtureState.last_target.z
       );
     }
-    // Beam endpoint is computed in room space, like fixture.position, but
-    // it's a child of rollGroup (inside pitchGroup, inside group) -- needs
-    // the inverse of all three rotations, in reverse order, to land in
-    // rollGroup's local space. See scene3d.js's updateFixtures() for the
-    // derivation; kept in sync with it by hand since it's only ~15 lines.
+    // The beam is a child of `rollGroup`, several rotated groups deep (yaw, pitch, the
+    // mount flip, roll). Its endpoint is a room-space point, so let three.js bring it
+    // into the beam's parent space rather than undoing each rotation by hand -- same
+    // as scene3d.js's updateFixtures().
     const positions = entry.beam.geometry.attributes.position;
-    const dx = beamEnd.x - entry.group.position.x;
-    const dy = beamEnd.y - entry.group.position.y;
-    const dz = beamEnd.z - entry.group.position.z;
-    const cosYaw = Math.cos(entry.group.rotation.z);
-    const sinYaw = Math.sin(entry.group.rotation.z);
-    const afterYawX = dx * cosYaw + dy * sinYaw;
-    const afterYawY = -dx * sinYaw + dy * cosYaw;
-    const afterYawZ = dz;
-    const cosPitch = Math.cos(entry.pitchGroup.rotation.x);
-    const sinPitch = Math.sin(entry.pitchGroup.rotation.x);
-    const afterPitchX = afterYawX;
-    const afterPitchY = afterYawY * cosPitch + afterYawZ * sinPitch;
-    const afterPitchZ = -afterYawY * sinPitch + afterYawZ * cosPitch;
-    const cosRoll = Math.cos(entry.rollGroup.rotation.y);
-    const sinRoll = Math.sin(entry.rollGroup.rotation.y);
-    const localX = afterPitchX * cosRoll - afterPitchZ * sinRoll;
-    const localY = afterPitchY;
-    const localZ = afterPitchX * sinRoll + afterPitchZ * cosRoll;
-    positions.setXYZ(0, 0, 0, 0);
-    positions.setXYZ(1, localX, localY, localZ);
+    entry.rollGroup.updateWorldMatrix(true, false);
+    const local = entry.rollGroup.worldToLocal(entry.group.parent.localToWorld(beamEnd.clone()));
+    const originY = entry.isMovingHead ? 0.10 : 0;
+    positions.setXYZ(0, 0, originY, 0);
+    positions.setXYZ(1, local.x, local.y, local.z);
     positions.needsUpdate = true;
 
     const beamBlocked = fixtureState && fixtureState.blocked_by_safety_zone;
