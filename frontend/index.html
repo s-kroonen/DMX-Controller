@@ -36,6 +36,7 @@
       <div id="dmx-status" class="status-pill">DMX: --</div>
       <div class="spacer"></div>
       <button id="btn-dmx-setup" class="toggle-btn">DMX Setup</button>
+      <button id="btn-config" class="toggle-btn">Config</button>
       <div class="dropdown-wrap">
         <button id="btn-windows-menu" class="toggle-btn">Windows &#9662;</button>
         <div id="windows-menu-dropdown" class="dropdown-menu hidden"></div>
@@ -321,6 +322,30 @@
         <h3>Import from QLC+ (.qxf)</h3>
         <input id="fc-qxf-file" type="file" accept=".qxf">
         <button id="fc-qxf-import">Import</button>
+      </div>
+    </div>
+
+    <div id="modal-config" class="modal hidden">
+      <div class="modal-content">
+        <h2>Config <button class="modal-close">x</button></h2>
+        <fieldset>
+          <legend>Export</legend>
+          <p class="hint">Downloads the whole venue setup as one JSON file: room size/shape/fixture placement,
+            safety zones, objects, groups, animations, patterns, sound config, and every fixture profile in
+            use -- including custom ones -- so it's self-contained. DMX interface settings (COM port, baud
+            rate) are left out since they name a physical port on this machine and mean nothing on another.</p>
+          <button id="cfg-export" class="primary-btn" type="button">Export config...</button>
+        </fieldset>
+        <fieldset>
+          <legend>Import</legend>
+          <p class="hint">Replaces the current room, groups, animations, patterns and sound config with the
+            file's contents. Any custom fixture profile the file needs that this install doesn't already have
+            is added automatically, so every fixture's DMX channels are known immediately. This cannot be
+            undone -- export your current setup first if you want to keep it.</p>
+          <input id="cfg-import-file" type="file" accept="application/json,.json">
+          <button id="cfg-import" class="primary-btn" type="button">Import config...</button>
+          <div id="cfg-import-status" class="hint"></div>
+        </fieldset>
       </div>
     </div>
 

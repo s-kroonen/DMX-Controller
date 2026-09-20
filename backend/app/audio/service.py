@@ -320,18 +320,40 @@ class SoundService:
 
     # -- persistence -------------------------------------------------------------
 
-    def _persist(self) -> None:
-        self.storage.save_audio({
+    def to_dict(self) -> dict:
+        """The full persisted config shape -- shared by _persist() and
+        config export."""
+        return {
             "device": self.device, "gain": self.gain, "sensitivity": self.sensitivity,
             "beat_source": self.beat_source, "tap_bpm": self.tap_bpm,
             "sound_mode": self.sound_mode,
             "functions": [fn.to_dict() for fn in self.functions.values()],
-        })
+        }
+
+    def _persist(self) -> None:
+        self.storage.save_audio(self.to_dict())
 
     def _load(self) -> None:
         data = self.storage.load_audio()
-        if not data:
-            return
+        if data:
+            self.apply_config(data)
+
+    def import_config(self, data: dict) -> None:
+        """Config import: stop capture first -- the device id and every
+        function's targets may no longer make sense (different machine,
+        different room), so don't leave stale runtimes pointing at fixtures
+        that just disappeared. The operator picks the input and re-enables
+        sound afterwards, same as a fresh setup."""
+        with self._lock:
+            self.stop()
+            self._runtimes = {}
+            self.errors = {}
+            self.apply_config(data)
+            self._persist()
+
+    def apply_config(self, data: dict) -> None:
+        """Apply a full config dict -- shared by startup load (from
+        data/audio.json) and config import (from an uploaded bundle)."""
         self.device = data.get("device")
         self.gain = float(data.get("gain", 1.0))
         self.sensitivity = float(data.get("sensitivity", 1.0))
@@ -341,6 +363,7 @@ class SoundService:
         if mode not in SOUND_MODES:   # files from before modes existed only had an on/off flag
             mode = "both" if data.get("sound_enabled") else "off"
         self.sound_mode = mode
+        self.functions = {}
         for raw in data.get("functions", []):
             fn = SoundFunction.from_dict(raw)
             self.functions[fn.id] = fn

@@ -100,6 +100,9 @@ export const api = {
   dmxRaw: (channel, value) => req("POST", "/dmx/raw", { channel, value }),
   dmxRawBlackout: () => req("POST", "/dmx/raw/blackout"),
   snapshot: () => req("GET", "/snapshot"),
+
+  exportConfig: () => req("GET", "/config/export"),
+  importConfig: (bundle) => req("POST", "/config/import", bundle),
 };
 
 export function connectWebSocket(onMessage) {

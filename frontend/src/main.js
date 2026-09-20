@@ -9,6 +9,7 @@ import { initAnimationsModal } from "./animations.js";
 import { initRoomShapeModal } from "./roomShape.js";
 import { initRoomObjectsModal } from "./roomObjects.js";
 import { initDmxSetupModal, reconnectDmx } from "./dmxSetup.js";
+import { initConfigModal } from "./configTransfer.js";
 import { initWindowsMenu } from "./windowsMenu.js";
 import { initSoundPanel } from "./sound.js";
 import { initScene3D } from "./scene3d.js";
@@ -67,6 +68,7 @@ async function bootstrap() {
   initRoomShapeModal();
   initRoomObjectsModal();
   initDmxSetupModal();
+  initConfigModal();
   initSoundPanel();
   initSafetyModal();
   initAnimationsModal();

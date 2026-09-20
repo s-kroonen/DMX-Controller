@@ -835,3 +835,24 @@ def dmx_raw_blackout():
 @router.get("/snapshot")
 def snapshot():
     return get_context().engine.snapshot()
+
+
+# ---------------------------------------------------------------- config export/import
+
+@router.get("/config/export")
+def export_config():
+    """The whole venue setup as one portable JSON document: room
+    size/shape/fixture placement, groups, animations, patterns, sound
+    config, and every fixture profile in use -- so importing it on another
+    machine needs nothing else to know each fixture's DMX channels."""
+    return get_context().export_config()
+
+
+@router.post("/config/import")
+def import_config(payload: dict):
+    ctx = get_context()
+    try:
+        ctx.import_config(payload)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(400, f"invalid config file: {exc}")
+    return ctx.export_config()

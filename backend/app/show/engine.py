@@ -326,6 +326,16 @@ class ShowEngine:
     def remove_group(self, group_id: str) -> None:
         self.groups.pop(group_id, None)
 
+    def load_room(self, room: Room) -> None:
+        """Replace the live room wholesale (config import) -- old fixture ids
+        may no longer exist and new ones carry no prior state, so
+        fixture_state is rebuilt from scratch rather than merged, and each
+        fixture's role defaults are reapplied so DMX output reflects the
+        just-loaded room instead of holding stale channel values."""
+        self.room = room
+        self.fixture_state = {fid: FixtureState() for fid in room.fixtures}
+        self._apply_all_fixture_defaults()
+
     def blackout(self) -> None:
         self.dmx.blackout()
         for state in self.fixture_state.values():

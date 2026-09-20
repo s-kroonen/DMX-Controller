@@ -17,6 +17,9 @@ from .dmx.simulator import SimulatedDmxOutput
 from .audio.service import SoundService
 from .dmx.usb_procs import kill_holders
 from .fixtures.library import FixtureLibrary
+from .fixtures.schema import FixtureProfile
+from .groups.model import Group
+from .room.model import Room
 from .show.animation import Animation, AnimationPlayer, PatternAnimation, PatternPlayer
 from .show.engine import ShowEngine
 from .storage import Storage
@@ -180,6 +183,66 @@ class AppContext:
 
     def persist_patterns(self) -> None:
         self.storage.save_patterns(list(self.patterns.values()))
+
+    # -- whole-config export/import -------------------------------------
+    #
+    # A venue's full setup in one portable file: room (size/shape/fixture
+    # placement/safety zones), groups, animations, patterns, sound config,
+    # and every fixture profile any of it needs -- so the DMX channel
+    # layout for each fixture is known immediately on whatever machine the
+    # file is loaded on, not just the one that exported it. DMX interface
+    # settings (COM port, baud rate) are deliberately left out: they name a
+    # physical port on the exporting machine and mean nothing on another.
+
+    CONFIG_VERSION = 1
+
+    def export_config(self) -> dict:
+        return {
+            "version": self.CONFIG_VERSION,
+            "room": self.engine.room.to_dict(),
+            "groups": [g.to_dict() for g in self.engine.groups.values()],
+            "animations": [a.to_dict() for a in self.animations.values()],
+            "patterns": [p.to_dict() for p in self.patterns.values()],
+            "audio": self.sound.to_dict(),
+            "fixture_profiles": [p.to_dict() for p in self.library.list()],
+        }
+
+    def import_config(self, data: dict) -> None:
+        """Replace room/groups/animations/patterns/sound config wholesale.
+        Raises ValueError (never partially applies) if the room references a
+        fixture profile neither the import nor this install's library
+        provides."""
+        for profile_dict in data.get("fixture_profiles", []):
+            profile = FixtureProfile.from_dict(profile_dict)
+            if self.library.get(profile.id) is None:
+                self.library.save(profile)
+
+        room = Room.from_dict(data["room"])
+        missing = {
+            fixture.profile_id for fixture in room.fixtures.values()
+            if self.library.get(fixture.profile_id) is None
+        }
+        if missing:
+            raise ValueError(f"missing fixture profile(s): {', '.join(sorted(missing))}")
+
+        for animation_id in list(self.players):
+            self.stop_animation(animation_id)
+        for pattern_id in list(self.pattern_players):
+            self.stop_pattern(pattern_id)
+
+        self.engine.load_room(room)
+        self.engine.groups = {group.id: group for group in
+                               (Group.from_dict(g) for g in data.get("groups", []))}
+        self.animations = {a.id: a for a in
+                            (Animation.from_dict(x) for x in data.get("animations", []))}
+        self.patterns = {p.id: p for p in
+                          (PatternAnimation.from_dict(x) for x in data.get("patterns", []))}
+        self.sound.import_config(data.get("audio") or {})
+
+        self.persist_room()
+        self.persist_groups()
+        self.persist_animations()
+        self.persist_patterns()
 
     # -- animation playback --------------------------------------------
 

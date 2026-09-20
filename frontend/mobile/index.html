@@ -116,6 +116,13 @@
             <button id="btn-dmx-reconnect" class="wide-btn">Reconnect</button>
             <h3>Desktop UI</h3>
             <a class="wide-btn" href="/">Open full desktop UI</a>
+            <h3>Config</h3>
+            <p class="hint">Export/import the whole venue setup (room, fixtures, groups, animations,
+              patterns, sound) as one file. Import replaces everything currently set up.</p>
+            <button id="cfg-export" class="wide-btn">Export config...</button>
+            <input id="cfg-import-file" type="file" accept="application/json,.json">
+            <button id="cfg-import" class="wide-btn">Import config...</button>
+            <div id="cfg-import-status" class="hint"></div>
           </div>
         </div>
       </aside>
