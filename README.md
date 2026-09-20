@@ -303,13 +303,22 @@ API: `GET /api/audio/devices|status|function-types`, `POST /api/audio/select|sta
     dimmer/strobe, a manual pan/tilt pad (pointer events, so it works for
     touch and mouse alike), and custom channels.
   - **Aim** is a real 3D view (`frontend/mobile/aim3d.js`), not a flat 2D
-    floor plan with a height slider -- orbit/pinch to look around, tap
-    any floor/wall/ceiling surface to aim the current selection there,
-    through the same room-space `aim` endpoint the desktop 3D view uses.
-    It's a separate, deliberately minimal module (not a reuse of the
-    desktop's `scene3d.js`) with no gizmo/dragging -- repositioning
-    fixtures stays a desktop task, so mobile's 3D view never risks
-    depending on (or breaking) that shared, more complex code.
+    floor plan with a height slider -- orbit/pinch to look around, tap a
+    fixture to select it or any floor/wall/ceiling surface to aim the
+    current selection there, through the same room-space `aim` endpoint
+    the desktop 3D view uses. It shows the *same* per-type fixture body
+    models and the same beam ("light path") -- `createFixtureMesh()` is
+    exported from the desktop's `scene3d.js` and reused as-is, so a
+    moving head looks like a moving head here too, not a placeholder
+    sphere, and the yaw/pitch/roll + beam math is kept in sync with it by
+    hand (small enough to duplicate safely). What's deliberately left out
+    is the gizmo/dragging -- repositioning fixtures stays a desktop task,
+    so mobile's 3D view never depends on (or risks breaking) that more
+    complex, editing-focused code. Fixture click/tap-selection on both
+    the desktop and mobile 3D views only hit-tests the actual body model,
+    not the beam or front-arrow (which are much bigger and used to make
+    clicking the floor near a beam's path misfire as "select this
+    fixture" instead of aiming).
   - Reuses the same backend and the same `api.js`/`state.js`/
     `main_data.js` modules as the desktop UI (imported directly, no
     duplicated fetch/state logic) -- only the layout differs. Browser-mic

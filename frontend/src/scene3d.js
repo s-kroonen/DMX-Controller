@@ -727,7 +727,11 @@ function buildFixtureBody(fixtureType, material) {
   return bodyGroup;
 }
 
-function createFixtureMesh(fixture) {
+// Exported so the mobile Aim view (frontend/mobile/aim3d.js) can build the
+// exact same per-type body model instead of a generic placeholder -- it
+// should look and behave like a smaller version of this view, not a
+// different, simplified one.
+export function createFixtureMesh(fixture) {
   const profile = state.profileById(fixture.profile_id);
   const fixtureType = profile?.fixture_type || "generic";
 

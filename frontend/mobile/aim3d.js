@@ -1,14 +1,14 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { api } from "../src/api.js";
-import { state, onStateChange } from "../src/state.js";
+import { state, onStateChange, notifyStateChange } from "../src/state.js";
+import { createFixtureMesh } from "../src/scene3d.js";
 
-// A deliberately lightweight 3D view for mobile "Aim" -- view + tap-to-aim
-// only, no gizmo/dragging (repositioning fixtures is a desktop editing
-// task, not something Aim needs), and fixtures are plain spheres rather
-// than the desktop's per-type body models. This is its own small module
-// instead of reusing the desktop's scene3d.js so mobile never depends on
-// (or risks breaking) the gizmo-editing code that module also owns.
+// A smaller, view+tap-to-aim-only version of the desktop 3D view -- same
+// per-type fixture body models and the same beam ("light path") math via
+// the shared createFixtureMesh(), just no gizmo/dragging (repositioning
+// fixtures stays a desktop editing task). Only the interaction surface is
+// different, not what it looks like or how a fixture's aim is shown.
 //
 // Same room-space convention as the desktop 3D view: meters, Z-up,
 // mapped into Three's Y-up world by rotating the whole root -90deg
@@ -149,32 +149,89 @@ function rebuildRoomShell() {
   }
 }
 
+// Mirrors scene3d.js's updateFixtures() -- same body model, same
+// yaw/pitch/roll composition, same beam ("light path") math -- minus the
+// gizmo drag-skip branches, since nothing here ever drags a fixture.
 function updateFixtures() {
   const currentIds = new Set(state.room.fixtures.map((f) => f.id));
   for (const [id, entry] of fixtureMeshes) {
     if (!currentIds.has(id)) {
-      fixturesGroup.remove(entry.mesh);
+      fixturesGroup.remove(entry.group);
       fixtureMeshes.delete(id);
     }
   }
+
   for (const fixture of state.room.fixtures) {
     let entry = fixtureMeshes.get(fixture.id);
+    if (entry && entry.profileId !== fixture.profile_id) {
+      fixturesGroup.remove(entry.group);
+      fixtureMeshes.delete(fixture.id);
+      entry = null;
+    }
     if (!entry) {
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.12, 16, 16),
-        new THREE.MeshStandardMaterial({ color: 0x3a7bd5 })
-      );
-      fixturesGroup.add(mesh);
-      entry = { mesh };
+      entry = createFixtureMesh(fixture);
+      fixturesGroup.add(entry.group);
       fixtureMeshes.set(fixture.id, entry);
     }
-    entry.mesh.position.set(fixture.position.x, fixture.position.y, fixture.position.z);
-    entry.mesh.material.color.set(state.isSelected(fixture.id) ? 0xffffff : 0x3a7bd5);
+
+    entry.group.position.set(fixture.position.x, fixture.position.y, fixture.position.z);
+    const yawRad = THREE.MathUtils.degToRad(fixture.orientation?.yaw_deg || 0);
+    entry.group.rotation.z = -yawRad;
+    const pitchRad = THREE.MathUtils.degToRad(fixture.orientation?.pitch_deg ?? 180);
+    entry.pitchGroup.rotation.x = pitchRad - Math.PI / 2;
+    entry.rollGroup.rotation.y = THREE.MathUtils.degToRad(fixture.orientation?.roll_deg || 0);
+
+    entry.bodyMaterial.color.set(state.isSelected(fixture.id) ? 0xffffff : entry.bodyMaterial.userData.baseColor);
+
+    const fixtureState = state.fixtureState[fixture.id];
+    const color = fixtureState && fixtureState.values
+      ? new THREE.Color(
+          (fixtureState.values.red || 0) / 255,
+          (fixtureState.values.green || 0) / 255,
+          (fixtureState.values.blue || 0) / 255,
+        )
+      : new THREE.Color(1, 1, 1);
+
+    let beamEnd = new THREE.Vector3(fixture.position.x, fixture.position.y, 0);
+    if (fixtureState && fixtureState.last_target) {
+      beamEnd = new THREE.Vector3(
+        fixtureState.last_target.x, fixtureState.last_target.y, fixtureState.last_target.z
+      );
+    }
+    // Beam endpoint is computed in room space, like fixture.position, but
+    // it's a child of rollGroup (inside pitchGroup, inside group) -- needs
+    // the inverse of all three rotations, in reverse order, to land in
+    // rollGroup's local space. See scene3d.js's updateFixtures() for the
+    // derivation; kept in sync with it by hand since it's only ~15 lines.
+    const positions = entry.beam.geometry.attributes.position;
+    const dx = beamEnd.x - entry.group.position.x;
+    const dy = beamEnd.y - entry.group.position.y;
+    const dz = beamEnd.z - entry.group.position.z;
+    const cosYaw = Math.cos(entry.group.rotation.z);
+    const sinYaw = Math.sin(entry.group.rotation.z);
+    const afterYawX = dx * cosYaw + dy * sinYaw;
+    const afterYawY = -dx * sinYaw + dy * cosYaw;
+    const afterYawZ = dz;
+    const cosPitch = Math.cos(entry.pitchGroup.rotation.x);
+    const sinPitch = Math.sin(entry.pitchGroup.rotation.x);
+    const afterPitchX = afterYawX;
+    const afterPitchY = afterYawY * cosPitch + afterYawZ * sinPitch;
+    const afterPitchZ = -afterYawY * sinPitch + afterYawZ * cosPitch;
+    const cosRoll = Math.cos(entry.rollGroup.rotation.y);
+    const sinRoll = Math.sin(entry.rollGroup.rotation.y);
+    const localX = afterPitchX * cosRoll - afterPitchZ * sinRoll;
+    const localY = afterPitchY;
+    const localZ = afterPitchX * sinRoll + afterPitchZ * cosRoll;
+    positions.setXYZ(0, 0, 0, 0);
+    positions.setXYZ(1, localX, localY, localZ);
+    positions.needsUpdate = true;
+
+    const beamBlocked = fixtureState && fixtureState.blocked_by_safety_zone;
+    entry.beam.material.color.set(beamBlocked ? 0xff0000 : color);
   }
 }
 
 function onTap(evt) {
-  if (state.selection.size === 0) return;
   const rect = renderer.domElement.getBoundingClientRect();
   const mouse = new THREE.Vector2(
     ((evt.clientX - rect.left) / rect.width) * 2 - 1,
@@ -182,6 +239,24 @@ function onTap(evt) {
   );
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(mouse, camera);
+
+  // Tapping a fixture selects it, same as the desktop 3D view -- and,
+  // same fix as there, only the body model is a hit target (not the beam,
+  // which can stretch across the whole room to wherever it's aimed).
+  const bodyList = [...fixtureMeshes.values()].map((e) => e.bodyGroup);
+  const fixtureHits = raycaster.intersectObjects(bodyList, true);
+  if (fixtureHits.length > 0) {
+    let node = fixtureHits[0].object;
+    while (node && !node.userData.fixtureId) node = node.parent;
+    if (node) {
+      state.selection.clear();
+      state.selection.add(node.userData.fixtureId);
+      notifyStateChange();
+      return;
+    }
+  }
+
+  if (state.selection.size === 0) return;
   const hits = raycaster.intersectObjects(aimSurfaces, false);
   if (hits.length === 0) return;
   const point = hits[0].point.clone();
