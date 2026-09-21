@@ -260,6 +260,67 @@ ranges. The bundled generic head and the Beamz MHL108 both tilt 180 degrees (up 
 side, measured), so they cannot aim below the horizon: such a target is flagged out of range and the tilt stops
 at level.
 
+## Edit mode and show mode
+
+The whole UI (desktop and phone) is in one of two modes, chosen with the **Edit | Show** switch at the
+top. The backend holds the mode, so every screen agrees, and it refuses (HTTP 409) what the current
+mode does not allow. It starts in edit mode.
+
+- **Edit**: patch, move and delete fixtures, room shape, objects, safety zones, groups, the Fixture
+  Creator, DMX setup, animation/pattern editing, points, config and saved rooms. The 3D drag
+  gizmo is on. Effects cannot run and heads cannot be aimed.
+- **Show**: run sound-to-light effects, play animations and patterns, aim moving heads (3D
+  click-to-aim, the Pan / Tilt window, the phone's Aim screen). Nothing can be moved or edited: those
+  buttons are simply not shown, and the sidebar Details are read-only.
+- **Both**: colors, dimmer, strobe, custom channels, zones, blackout, selecting groups and fixtures.
+
+Switching to edit stops running animations, patterns and sound-to-light, and asks first so it is
+never done by accident during a show. `PUT /api/mode {"mode": "edit"|"show"}`; every snapshot and
+websocket message carries `mode`. Markup follows it with `<body data-mode>` and the `.edit-only` /
+`.show-only` classes (`frontend/src/mode.js`).
+
+## Calibrating the heads
+
+In edit mode the **Calibrate** window (header button) and, on the phone, the **Calibrate** tab check
+where the heads really point. Choose a target point (X/Y/Z, +/- buttons, a saved animation point,
+"Pick in 3D" on the desktop, or tap a surface on the phone's Aim tab), then **Aim all here**: every
+pan/tilt head points at it with a dim red beam (~20 %), and a magenta marker shows the point in 3D. If
+the beams do not meet, nudge that head's pan/tilt offset (0.1-5 deg steps; each nudge re-aims and is
+saved), flip invert pan/tilt, **Solo** one head, or **Reset** to the offsets it had when the window
+opened. Each row shows the computed pan/tilt angles and DMX values and warns when a point is out of
+range (a head that stands on the floor cannot tilt below level, so choose a wall or ceiling point).
+
+**Sweep** moves the point along a line (X or Y), a circle or through the saved points, and every head
+follows it, so a head that is off visibly drifts away from the spot the others stay on; nudging
+offsets during a sweep takes effect immediately. Closing the window (or switching to show mode) stops
+the sweep and puts every light back as it was.
+
+Endpoints (edit mode only, so the show-mode aim guard is unchanged): `POST /api/calibration/aim|beam|
+offsets|sweep|sweep/stop|pan-tilt`; the snapshot carries `calibration` (`sweeping`, `beam`). The raw
+RGB / Strobe / Pan-Tilt / Zones / Custom windows stay available in edit mode as **Test tools**, closed
+until opened; each mode remembers its own window layout. Header buttons Patch, Fixture Creator, Room
+Shape, Objects and Safety Zones are now under one **Setup** menu.
+
+## Saved rooms
+
+Besides export/import of a file, the backend keeps named snapshots of the whole venue (room,
+fixtures, groups, shows, sound config and the fixture profiles they need) in
+`backend/data/saved_rooms/`. In **Config** (edit mode): save the current room under a name, load a
+saved one, delete one, or start a **new empty room** (fixtures, groups, shows and effects are
+cleared; the sound input and levels are kept). Loading or starting a new room first keeps the room
+being left as "Before switching", so a switch can be undone. `GET /api/rooms`, `POST /api/rooms`
+(`{"name"}`), `POST /api/rooms/new`, `POST /api/rooms/{id}/load`, `DELETE /api/rooms/{id}`.
+
+### Saved copies of bundled fixture profiles stay current
+
+A copy of a bundled profile in `backend/data/fixtures/` shadows the bundled one, so when a newer
+version gained something (zones, a strobe channel), an old copy hid it. Copies that were not edited
+in the Fixture Creator (`customized`) are only snapshots, so they are rebuilt from the bundled
+profile at startup, on save, on load and on config import, keeping the pan/tilt ranges tuned on
+them; the old file goes to `backend/data/fixtures/_replaced/`. Profiles you made yourself, and
+bundled ones you changed in the Fixture Creator, are never touched. The UI says which profiles were
+updated when a room is saved, loaded or imported.
+
 ## The "All lights" group
 
 `All lights` is built in: it always contains every fixture in the room. The backend adds a fixture

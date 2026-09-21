@@ -114,7 +114,7 @@ function render() {
   hint.textContent = "Pick which zones the RGB window colors and the brightness slider dims. "
     + "Nothing picked = every zone.";
   controls.classList.remove("hidden");
-  if (!autoOpened && !isPanelOpen("zones")) {
+  if (!autoOpened && state.mode === "show" && !isPanelOpen("zones")) {
     autoOpened = true; // once per page load, so a zoned fixture's controls are easy to find
     openPanel("zones");
   }

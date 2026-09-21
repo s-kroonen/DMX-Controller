@@ -53,6 +53,47 @@ class Storage:
     def patterns_path(self) -> Path:
         return self.data_dir / "patterns.json"
 
+    # -- saved rooms: whole-venue snapshots kept in the backend (the same document as a config
+    # export), so a room can be put away and brought back without exporting a file
+
+    @property
+    def saved_rooms_dir(self) -> Path:
+        return self.data_dir / "saved_rooms"
+
+    def list_saved_rooms(self) -> list[dict]:
+        found = []
+        if self.saved_rooms_dir.exists():
+            for path in sorted(self.saved_rooms_dir.glob("*.json")):
+                try:
+                    bundle = json.loads(path.read_text())
+                except ValueError:
+                    continue
+                room = bundle.get("room") or {}
+                found.append({
+                    "id": path.stem,
+                    "name": bundle.get("saved_name") or room.get("name") or path.stem,
+                    "saved_at": bundle.get("saved_at"),
+                    "fixtures": len(room.get("fixtures") or []),
+                    "groups": len(bundle.get("groups") or []),
+                    "backup": path.stem.startswith("_"),   # the automatic copy made before a switch
+                })
+        return sorted(found, key=lambda r: (r["backup"], r["name"].lower()))
+
+    def read_saved_room(self, room_id: str) -> Optional[dict]:
+        path = self.saved_rooms_dir / f"{room_id}.json"
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def write_saved_room(self, room_id: str, bundle: dict) -> None:
+        self.saved_rooms_dir.mkdir(parents=True, exist_ok=True)
+        (self.saved_rooms_dir / f"{room_id}.json").write_text(json.dumps(bundle, indent=2))
+
+    def delete_saved_room(self, room_id: str) -> bool:
+        path = self.saved_rooms_dir / f"{room_id}.json"
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
     def load_room(self) -> Room:
         if self.room_path.exists():
             return Room.from_dict(json.loads(self.room_path.read_text()))

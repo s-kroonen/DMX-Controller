@@ -1,6 +1,7 @@
 import { state, notifyStateChange } from "./state.js";
 import { openGroupModal, deleteGroupWithConfirm, ALL_GROUP_ID } from "./groupModal.js";
 import { openPatchModal, deleteFixtureWithConfirm } from "./patch.js";
+import { onModeChange } from "./mode.js";
 
 // The left menu: groups and fixtures as buttons. Click selects (shift-click adds). In edit mode
 // (the Edit button at the top) every item also shows edit and delete buttons, and the + buttons
@@ -24,6 +25,12 @@ export function initSidebar() {
     toggle.classList.toggle("active", on);
     toggle.textContent = on ? "Done" : "Edit";
   };
+  // Show mode has no edit buttons at all; going back to edit mode starts with them closed
+  onModeChange(() => {
+    sidebar.classList.remove("editing");
+    toggle.classList.remove("active");
+    toggle.textContent = "Edit";
+  });
   document.getElementById("group-add").onclick = () => openGroupModal();
   document.getElementById("fixture-add").onclick = () => openPatchModal();
 }

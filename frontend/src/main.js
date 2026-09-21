@@ -17,6 +17,8 @@ import { initZonesPanel } from "./zones.js";
 import { initScene3D } from "./scene3d.js";
 import { initFixtureDetailsPanel, renderFixtureDetailsPanel } from "./fixtureDetails.js";
 import { loadInitialData } from "./main_data.js";
+import { applyMode, initModeSwitch } from "./mode.js";
+import { initCalibrateWindow } from "./calibrateWindow.js";
 
 function initModalCloseOnBackdrop() {
   document.querySelectorAll(".modal").forEach((modal) => {
@@ -55,6 +57,7 @@ function initBlackout() {
 
 async function bootstrap() {
   onStateChange(() => {
+    applyMode();
     renderSidebar();
     updateDmxStatusPill();
     renderFixtureDetailsPanel();
@@ -79,6 +82,8 @@ async function bootstrap() {
   initAnimationsModal();
   initBlackout();
   initModalCloseOnBackdrop();
+  initModeSwitch();
+  initCalibrateWindow();
 
   initScene3D(document.getElementById("scene-container"));
 
@@ -87,6 +92,8 @@ async function bootstrap() {
     state.groups = snapshot.groups;
     state.fixtureState = snapshot.fixture_state;
     state.dmxStatus = snapshot.dmx_status;
+    state.mode = snapshot.mode || state.mode;
+    state.calibration = snapshot.calibration || state.calibration;
     notifyStateChange();
   });
 

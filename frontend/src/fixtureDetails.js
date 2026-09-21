@@ -3,6 +3,7 @@ import { state, notifyStateChange } from "./state.js";
 import { reloadRoomAndGroups } from "./main_data.js";
 import { loadPref, savePref } from "./uiPrefs.js";
 import { wireMountSelect } from "./mounting.js";
+import { onModeChange } from "./mode.js";
 
 // Inline, non-modal fixture detail editor living under the fixture list in
 // the sidebar (unlike every other editor, which is a popup) -- loads the
@@ -23,6 +24,12 @@ let formDirty = false;
 let syncDetailsMount = () => {};
 
 export function initFixtureDetailsPanel() {
+  // In show mode the details are only for reading: nothing here can be changed
+  onModeChange((mode) => {
+    document.querySelectorAll("#fixture-details-form input, #fixture-details-form select").forEach((field) => {
+      field.disabled = mode !== "edit";
+    });
+  });
   syncDetailsMount = wireMountSelect("fd-mount", "fd-pitch");
   const header = document.getElementById("fixture-details-toggle");
   header.onclick = () => setCollapsed(!isCollapsed());
@@ -167,6 +174,7 @@ function renderGroupCheckboxes(fixture) {
       const cb = document.createElement("input");
       cb.type = "checkbox";
       cb.dataset.group = group.id;
+      cb.disabled = state.mode !== "edit";
       cb.onchange = () => toggleGroupMembership(fixture.id, group.id, cb);
       label.append(cb, document.createTextNode(group.name));
       container.appendChild(label);
@@ -179,7 +187,8 @@ function renderGroupCheckboxes(fixture) {
     }
   }
   container.querySelectorAll("input[data-group]").forEach((cb) => {
-    if (cb.disabled) return; // a change is being saved
+    cb.disabled = state.mode !== "edit" || cb.dataset.busy === "1";
+    if (cb.dataset.busy === "1") return; // a change is being saved
     const group = state.groupById(cb.dataset.group);
     cb.checked = !!group && group.fixture_ids.includes(fixture.id);
   });
@@ -188,6 +197,7 @@ function renderGroupCheckboxes(fixture) {
 async function toggleGroupMembership(fixtureId, groupId, cb) {
   const wanted = cb.checked;
   cb.disabled = true;
+  cb.dataset.busy = "1";
   try {
     const group = state.groupById(groupId); // read now, not when the row was built
     const others = group.fixture_ids.filter((id) => id !== fixtureId);
@@ -197,6 +207,7 @@ async function toggleGroupMembership(fixtureId, groupId, cb) {
   } catch (err) {
     console.error(err);
   }
+  cb.dataset.busy = "0";
   cb.disabled = false;
   await reloadRoomAndGroups(); // the checkbox then shows what is really saved
   notifyStateChange();

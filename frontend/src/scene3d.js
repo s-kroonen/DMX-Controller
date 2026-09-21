@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
+import { makeCalibrationMarker, updateCalibrationMarker } from "./calMarker.js";
 import { api } from "./api.js";
 import { state, onStateChange, notifyStateChange } from "./state.js";
 import { loadPref, savePref } from "./uiPrefs.js";
@@ -24,6 +25,9 @@ let objectMeshes = new Map(); // room object id -> {group, kind}
 let zoneMeshes = new Map();
 let aimSurfaces = []; // meshes the click-to-aim raycaster can hit (floor/walls/ceiling)
 let gizmoAttachedFixtureId = null;
+let gizmoWasAllowed = true;
+let calMarker = null;
+let pickCallback = null; // set while the Calibrate window waits for a click on a surface
 let selectedObjectId = null; // a room object selected by clicking it in 3D (non-wall only)
 let suppressNextClick = false;
 let gizmoMode = "translate"; // "translate" | "yaw" | "pitch" -- yaw/pitch only apply to fixtures
@@ -67,6 +71,8 @@ export function initScene3D(container) {
   roomRoot = new THREE.Group();
   roomRoot.rotation.x = -Math.PI / 2; // room-space Z-up -> Three Y-up
   scene.add(roomRoot);
+  calMarker = makeCalibrationMarker();
+  roomRoot.add(calMarker);
 
   staticGroup = new THREE.Group();
   roomRoot.add(staticGroup);
@@ -157,9 +163,11 @@ export function getGizmoMode() {
 }
 
 function reattachGizmoForMode() {
-  const entry = gizmoAttachedFixtureId ? fixtureMeshes.get(gizmoAttachedFixtureId) : null;
+  const entry = gizmoAttachedFixtureId && state.mode === "edit" ? fixtureMeshes.get(gizmoAttachedFixtureId) : null;
   let wantedObj = null;
-  if (entry && gizmoMode === "pitch") {
+  if (state.mode !== "edit") {
+    wantedObj = null; // show mode: nothing can be dragged by accident
+  } else if (entry && gizmoMode === "pitch") {
     wantedObj = entry.pitchGroup;
   } else if (entry && gizmoMode === "roll") {
     wantedObj = entry.rollGroup;
@@ -303,7 +311,10 @@ function updateGizmoAttachment() {
 
   if (selection.length > 0) selectedObjectId = null; // any sidebar selection wins
 
-  const attachmentChanged = gizmoAttachedFixtureId !== singleFixtureId;
+  // the drag gizmo (moving fixtures and objects) only exists in edit mode
+  const gizmoAllowed = state.mode === "edit";
+  const attachmentChanged = gizmoAttachedFixtureId !== singleFixtureId || gizmoAllowed !== gizmoWasAllowed;
+  gizmoWasAllowed = gizmoAllowed;
   gizmoAttachedFixtureId = singleFixtureId;
 
   // Room objects have no orientation field -- yaw/pitch never apply to
@@ -325,7 +336,14 @@ function clearGroup(group) {
   while (group.children.length) group.remove(group.children[0]);
 }
 
+// The next click on a floor/wall/ceiling surface goes to `callback` (room-space point) instead of
+// selecting or aiming; used by the Calibrate window's "Pick in 3D".
+export function startPickPoint(callback) {
+  pickCallback = callback;
+}
+
 function rebuildScene() {
+  updateCalibrationMarker(calMarker, state.calibrationPoint, state.mode === "edit");
   const staticKey = JSON.stringify({ floor: state.room.floor_points, dims: state.room.dimensions });
   if (staticKey !== lastStaticKey) {
     lastStaticKey = staticKey;
@@ -920,6 +938,18 @@ function onSceneClick(evt, container) {
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(mouse, camera);
 
+  if (pickCallback) {
+    const surfaceHits = raycaster.intersectObjects(aimSurfaces, false);
+    if (surfaceHits.length > 0) {
+      const picked = surfaceHits[0].point.clone();
+      roomRoot.worldToLocal(picked);
+      const callback = pickCallback;
+      pickCallback = null;
+      callback({ x: picked.x, y: picked.y, z: picked.z });
+    }
+    return; // a pick click never also selects or aims
+  }
+
   // Clicking a fixture selects it directly in the 3D view (same as
   // clicking its sidebar button) instead of aiming, and takes priority
   // over everything else so you can always grab exactly what you clicked.
@@ -946,8 +976,9 @@ function onSceneClick(evt, container) {
 
   // Clicking a draggable object selects it (and gives it the gizmo)
   // instead of aiming, and takes priority over the floor/wall aim-click.
+  // Objects are only picked to be moved, which is an edit-mode thing.
   const objectMeshList = [...objectMeshes.values()].map((e) => e.group);
-  const objectHits = raycaster.intersectObjects(objectMeshList, true);
+  const objectHits = state.mode === "edit" ? raycaster.intersectObjects(objectMeshList, true) : [];
   if (objectHits.length > 0) {
     let node = objectHits[0].object;
     while (node && !node.userData.objectId) node = node.parent;
@@ -970,6 +1001,7 @@ function onSceneClick(evt, container) {
   if (state.selection.size === 0) {
     return;
   }
+  if (state.mode !== "show") return; // pointing moving heads is for the show
   for (const targetId of state.selection) {
     api.aim(targetId, point.x, point.y, point.z).catch(console.error);
   }

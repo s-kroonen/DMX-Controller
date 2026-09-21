@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Optional
 
 from .dmx.dmx4all import Dmx4AllConfig, Dmx4AllOutput
@@ -19,8 +20,8 @@ from .dmx.usb_procs import kill_holders
 from .fixtures.library import FixtureLibrary
 from .fixtures.schema import FixtureProfile
 from .groups.model import Group
-from .room.model import Room
-from .show.animation import Animation, AnimationPlayer, PatternAnimation, PatternPlayer
+from .room.model import Room, Vec3
+from .show.animation import Animation, AnimationPlayer, AnimationTrack, Keyframe, PatternAnimation, PatternPlayer
 from .show.engine import ShowEngine
 from .storage import Storage
 
@@ -31,6 +32,17 @@ class AppContext:
     def __init__(self):
         self.storage = Storage()
         self.library = FixtureLibrary(user_dir=self.storage.fixtures_dir)
+        # saved copies of bundled profiles are brought up to date at startup, so a profile that
+        # gained something in a newer version isn't hidden by an old copy
+        self.profile_notes: list[dict] = self.library.refresh_overrides()
+        for note in self.profile_notes:
+            print(f"fixture profile {note['id']}: {note['action']} from the current version "
+                  f"(old copy kept at {note['backup']})")
+        # "edit": patch/room/group changes allowed; "show": run effects and aim heads. Held here so
+        # every screen (desktop and phone) sees, and obeys, the same mode.
+        self.mode: str = "edit"
+        self.sweep_player: Optional[AnimationPlayer] = None
+        self.sweep_ids: list[str] = []
         room = self.storage.load_room()
 
         # A bad/unplugged DMX4ALL port must never take the whole backend
@@ -173,6 +185,60 @@ class AppContext:
         if stop_old:
             old_output.stop()
 
+    # -- edit / show mode ---------------------------------------------
+
+    MODES = ("edit", "show")
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in self.MODES:
+            raise ValueError(f"mode must be one of {', '.join(self.MODES)}")
+        if mode == "edit" and self.mode != "edit":
+            self.stop_running_shows()   # nothing keeps running (or aiming) while the rig is being edited
+        if mode == "show" and self.mode != "show":
+            self.stop_calibration()     # the calibration beam and sweep belong to edit mode
+        self.mode = mode
+
+    def stop_running_shows(self) -> None:
+        for animation_id in list(self.players):
+            self.stop_animation(animation_id)
+        for pattern_id in list(self.pattern_players):
+            self.stop_pattern(pattern_id)
+        self.sound.configure(sound_mode="off")
+
+    def snapshot(self) -> dict:
+        return {**self.engine.snapshot(), "mode": self.mode,
+                "calibration": {"sweeping": self.sweep_player is not None, "sweep_ids": list(self.sweep_ids),
+                                "beam": self.engine.beam_ids()}}
+
+    # -- calibration ------------------------------------------------------
+    #
+    # Edit-mode tools for checking where the heads really point: a sweep moves ONE target point
+    # along a path and every chosen head follows it, so a badly calibrated head visibly drifts off
+    # the spot the others stay on.
+
+    def start_sweep(self, fixture_ids: list[str], points: list[Vec3], seconds_per_leg: float) -> None:
+        if len(points) < 2:
+            raise ValueError("a sweep needs at least two points")
+        self.stop_sweep()
+        times = [i * seconds_per_leg for i in range(len(points) + 1)]
+        path = points + [points[0]]                       # back to the start, then around again
+        keyframes = [Keyframe(time_s=t, target_point=p) for t, p in zip(times, path)]
+        animation = Animation(id="_calibration", name="calibration sweep", loop=True, tracks=[
+            AnimationTrack(target_id=fid, keyframes=list(keyframes)) for fid in fixture_ids])
+        self.sweep_player = AnimationPlayer(self.engine, animation)
+        self.sweep_ids = list(fixture_ids)
+        self.sweep_player.start()
+
+    def stop_sweep(self) -> None:
+        if self.sweep_player is not None:
+            self.sweep_player.stop()
+        self.sweep_player = None
+        self.sweep_ids = []
+
+    def stop_calibration(self) -> None:
+        self.stop_sweep()
+        self.engine.beam_off()
+
     # -- persistence --------------------------------------------------
 
     def persist_room(self) -> None:
@@ -220,6 +286,7 @@ class AppContext:
             profile = FixtureProfile.from_dict(profile_dict)
             if self.library.get(profile.id) is None:
                 self.library.save(profile)
+        self.profile_notes = self.library.refresh_overrides()   # a stale local copy is fixed, not trusted
 
         room = Room.from_dict(data["room"])
         missing = {
@@ -246,6 +313,63 @@ class AppContext:
         self.persist_groups()
         self.persist_animations()
         self.persist_patterns()
+
+    # -- saved rooms ----------------------------------------------------
+    #
+    # Named snapshots of the whole venue (room, fixtures, groups, shows, sound config and every
+    # profile they need) kept in the backend, so a room can be saved, put away, and loaded again
+    # without exporting a file. Loading or starting a new room first keeps the room being left as
+    # the "previous" snapshot, so a switch can be undone.
+
+    PREVIOUS_ID = "_previous"
+
+    @staticmethod
+    def room_slug(name: str) -> str:
+        slug = "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-")
+        while "--" in slug:
+            slug = slug.replace("--", "-")
+        return slug or "room"
+
+    def _snapshot_bundle(self, name: str) -> dict:
+        return {**self.export_config(), "saved_name": name, "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+
+    def save_room_as(self, name: str) -> dict:
+        name = name.strip()
+        if not name:
+            raise ValueError("a saved room needs a name")
+        self.profile_notes = self.library.refresh_overrides()   # never save a stale profile
+        self.engine.room.name = name
+        self.persist_room()
+        room_id = self.room_slug(name)
+        self.storage.write_saved_room(room_id, self._snapshot_bundle(name))
+        return {"id": room_id, "name": name}
+
+    def _keep_previous(self) -> None:
+        self.storage.write_saved_room(
+            self.PREVIOUS_ID, self._snapshot_bundle(f"Before switching ({self.engine.room.name})"))
+
+    def load_saved_room(self, room_id: str) -> None:
+        bundle = self.storage.read_saved_room(room_id)
+        if bundle is None:
+            raise KeyError(room_id)
+        if room_id != self.PREVIOUS_ID:
+            self._keep_previous()
+        self.import_config(bundle)
+
+    def delete_saved_room(self, room_id: str) -> bool:
+        return self.storage.delete_saved_room(room_id)
+
+    def new_room(self, name: str) -> None:
+        """An empty room. The sound input and its levels are kept; effects, groups, shows and
+        fixtures belong to the room being left, so they are not."""
+        self._keep_previous()
+        audio = {**self.sound.to_dict(), "functions": [], "sound_mode": "off"}
+        self.import_config({
+            "version": self.CONFIG_VERSION,
+            "room": Room(name=name.strip() or "New room").to_dict(),
+            "groups": [], "animations": [], "patterns": [],
+            "audio": audio, "fixture_profiles": [],
+        })
 
     # -- animation playback --------------------------------------------
 
@@ -274,6 +398,7 @@ class AppContext:
             player.stop()
 
     def shutdown(self) -> None:
+        self.stop_sweep()
         self.sound.shutdown()
         for player in list(self.players.values()):
             player.stop()

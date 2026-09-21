@@ -70,6 +70,9 @@ class ConfigIn(BaseModel):
 
 @router.post("/config")
 def audio_config(payload: ConfigIn):
+    runs_effects = payload.sound_enabled or payload.sound_mode not in (None, "off")
+    if runs_effects and get_context().mode != "show":
+        raise HTTPException(409, "Sound-to-light effects only run in show mode.")
     try:
         _sound().configure(**payload.model_dump())
     except ValueError as exc:

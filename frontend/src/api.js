@@ -1,3 +1,5 @@
+import { state } from "./state.js";
+
 const BASE = "/api";
 
 async function req(method, path, body) {
@@ -11,6 +13,8 @@ async function req(method, path, body) {
     const text = await resp.text();
     let detail = text;
     try { detail = JSON.parse(text).detail || text; } catch { /* not JSON, use raw text */ }
+    // 409 = the current mode does not allow this (another screen switched modes): say so
+    if (resp.status === 409) window.dispatchEvent(new CustomEvent("dmx-notice", { detail }));
     throw new Error(detail);
   }
   return resp.json();
@@ -27,6 +31,23 @@ export const api = {
     if (!resp.ok) throw new Error("qxf import failed: " + (await resp.text()));
     return resp.json();
   },
+
+  // calibration tools (edit mode)
+  calAim: (ids, p) => req("POST", "/calibration/aim", { target_ids: ids, x: p.x, y: p.y, z: p.z }),
+  calBeam: (ids, on) => req("POST", "/calibration/beam", { target_ids: ids, on }),
+  calOffsets: (body) => req("POST", "/calibration/offsets", body),
+  calSweep: (ids, points, seconds) =>
+    req("POST", "/calibration/sweep", { target_ids: ids, points, seconds_per_leg: seconds }),
+  calSweepStop: () => req("POST", "/calibration/sweep/stop"),
+
+  getMode: () => req("GET", "/mode"),
+  setMode: (mode) => req("PUT", "/mode", { mode }),
+  // rooms saved in the backend
+  listRooms: () => req("GET", "/rooms"),
+  saveRoom: (name) => req("POST", "/rooms", { name }),
+  newRoom: (name) => req("POST", "/rooms/new", { name }),
+  loadRoom: (id) => req("POST", `/rooms/${encodeURIComponent(id)}/load`),
+  deleteRoom: (id) => req("DELETE", `/rooms/${encodeURIComponent(id)}`),
 
   getRoom: () => req("GET", "/room"),
   updateRoom: (room) => req("PUT", "/room", room),
@@ -64,8 +85,9 @@ export const api = {
   setStrobe: (targetIds, value, zones) =>
     req("POST", "/control/strobe", { target_ids: targetIds, value, zones: zones && zones.length ? zones : null }),
   setShutter: (targetIds, closed) => req("POST", "/control/shutter", { target_ids: targetIds, closed }),
+  // show mode drives heads through /control; in edit mode the raw window is a test tool
   setPanTilt: (targetId, pan, tilt, panFine = 0, tiltFine = 0) =>
-    req("POST", "/control/pan-tilt", { target_id: targetId, pan, tilt, pan_fine: panFine, tilt_fine: tiltFine }),
+    req("POST", state.mode === "edit" ? "/calibration/pan-tilt" : "/control/pan-tilt", { target_id: targetId, pan, tilt, pan_fine: panFine, tilt_fine: tiltFine }),
   aim: (targetId, x, y, z, allowUnsafe = false) =>
     req("POST", "/control/aim", { target_id: targetId, x, y, z, allow_unsafe: allowUnsafe }),
   setCustom: (targetId, label, value) =>

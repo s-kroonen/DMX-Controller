@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..context import get_context
@@ -25,6 +25,162 @@ from ..room.model import (
 from ..show.animation import Animation, AnimationTrack, Keyframe, PatternAnimation
 
 router = APIRouter(prefix="/api")
+
+
+# ---------------------------------------------------------------- edit / show mode
+#
+# The rig is either being set up ("edit": patch fixtures, move them, change the room, groups and
+# shows) or being run ("show": effects, shows, aiming moving heads). Each side is refused, with
+# 409, while the other mode is active, so nothing is moved by accident during a show and nothing
+# runs while the room is being edited. Colors, dimmer, strobe, custom channels and blackout work
+# in both modes.
+
+def require_edit():
+    if get_context().mode != "edit":
+        raise HTTPException(409, "This is only possible in edit mode.")
+
+
+def require_show():
+    if get_context().mode != "show":
+        raise HTTPException(409, "This is only possible in show mode.")
+
+
+EDIT = [Depends(require_edit)]
+SHOW = [Depends(require_show)]
+
+
+class ModeIn(BaseModel):
+    mode: str
+
+
+@router.get("/mode")
+def get_mode():
+    return {"mode": get_context().mode}
+
+
+@router.put("/mode")
+def set_mode(payload: ModeIn):
+    ctx = get_context()
+    try:
+        ctx.set_mode(payload.mode)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"mode": ctx.mode}
+
+
+# ---------------------------------------------------------------- calibration
+#
+# Checking where the heads really point. Edit mode only, and separate from the show-mode aim
+# above so the show-mode guard stays as it is: every head aims at ONE shared point (or follows one
+# point moving along a path) and the operator watches whether the beams stay together.
+
+class PointIn(BaseModel):
+    x: float
+    y: float
+    z: float
+
+
+class CalibrationAimIn(PointIn):
+    target_ids: list[str]
+
+
+class CalibrationBeamIn(BaseModel):
+    target_ids: list[str]
+    on: bool
+
+
+class CalibrationOffsetsIn(BaseModel):
+    fixture_id: str
+    pan_offset_deg: Optional[float] = None
+    tilt_offset_deg: Optional[float] = None
+    inverted_pan: Optional[bool] = None
+    inverted_tilt: Optional[bool] = None
+    point: Optional[PointIn] = None   # re-aim at this point after the change, so the effect is visible
+
+
+class CalibrationSweepIn(BaseModel):
+    target_ids: list[str]
+    points: list[PointIn]
+    seconds_per_leg: float = 3.0
+
+
+class CalibrationPanTiltIn(BaseModel):
+    target_id: str
+    pan: int
+    tilt: int
+    pan_fine: int = 0
+    tilt_fine: int = 0
+
+
+def _fixture_ids(ids: list[str]) -> list[str]:
+    return get_context().engine.resolve_fixture_ids(ids)
+
+
+@router.post("/calibration/aim", dependencies=EDIT)
+def calibration_aim(payload: CalibrationAimIn):
+    ctx = get_context()
+    ctx.stop_sweep()
+    results = ctx.engine.calibration_aim(_fixture_ids(payload.target_ids), Vec3(payload.x, payload.y, payload.z))
+    return {"results": results}
+
+
+@router.post("/calibration/beam", dependencies=EDIT)
+def calibration_beam(payload: CalibrationBeamIn):
+    ctx = get_context()
+    ids = _fixture_ids(payload.target_ids)
+    if payload.on:
+        ctx.engine.beam_on(ids)
+    else:
+        ctx.engine.beam_off(ids)
+    return {"beam": ctx.engine.beam_ids()}
+
+
+@router.post("/calibration/offsets", dependencies=EDIT)
+def calibration_offsets(payload: CalibrationOffsetsIn):
+    ctx = get_context()
+    instance = ctx.engine.room.fixtures.get(payload.fixture_id)
+    if instance is None:
+        raise HTTPException(404, "fixture not found")
+    if payload.pan_offset_deg is not None:
+        instance.pan_offset_deg = max(-180.0, min(180.0, round(payload.pan_offset_deg, 3)))
+    if payload.tilt_offset_deg is not None:
+        instance.tilt_offset_deg = max(-180.0, min(180.0, round(payload.tilt_offset_deg, 3)))
+    if payload.inverted_pan is not None:
+        instance.inverted_pan = payload.inverted_pan
+    if payload.inverted_tilt is not None:
+        instance.inverted_tilt = payload.inverted_tilt
+    ctx.persist_room()
+    result = None
+    if payload.point is not None and ctx.sweep_player is None:   # a running sweep picks the change up by itself
+        p = payload.point
+        result = ctx.engine.calibration_aim([payload.fixture_id], Vec3(p.x, p.y, p.z)).get(payload.fixture_id)
+    return {"fixture": instance.to_dict(), "result": result}
+
+
+@router.post("/calibration/sweep", dependencies=EDIT)
+def calibration_sweep(payload: CalibrationSweepIn):
+    ctx = get_context()
+    try:
+        ctx.start_sweep(_fixture_ids(payload.target_ids), [Vec3(p.x, p.y, p.z) for p in payload.points],
+                        max(0.5, payload.seconds_per_leg))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"sweeping": True}
+
+
+@router.post("/calibration/sweep/stop", dependencies=EDIT)
+def calibration_sweep_stop():
+    get_context().stop_sweep()
+    return {"sweeping": False}
+
+
+@router.post("/calibration/pan-tilt", dependencies=EDIT)
+def calibration_pan_tilt(payload: CalibrationPanTiltIn):
+    """Raw pan/tilt for the Test tools window in edit mode (checking channel mapping and range)."""
+    get_context().stop_sweep()
+    get_context().engine.set_raw_pan_tilt(payload.target_id, payload.pan, payload.tilt,
+                                          payload.pan_fine, payload.tilt_fine)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- fixtures
@@ -82,9 +238,12 @@ class FixtureProfileIn(BaseModel):
     role_ranges: Optional[dict[str, RoleRangeIn]] = None
     # likewise for zones: the creator UI doesn't edit them, so None keeps the existing ones
     zones: Optional[list[ZoneIn]] = None
+    # the Fixture Creator sends True: the structure was edited on purpose, so a newer bundled
+    # version must not replace it. None keeps what the existing profile has.
+    customized: Optional[bool] = None
 
 
-@router.post("/fixtures/profiles")
+@router.post("/fixtures/profiles", dependencies=EDIT)
 def create_or_update_profile(payload: FixtureProfileIn):
     """The fixture creator: define a new type, or edit a user-saved one."""
     ctx = get_context()
@@ -119,19 +278,21 @@ def create_or_update_profile(payload: FixtureProfileIn):
         fixture_type=payload.fixture_type,
         role_ranges=role_ranges,
         zones=zones,
+        customized=bool(payload.customized) if payload.customized is not None
+        else bool(existing.customized) if existing else True,
     )
     ctx.library.save(profile)
     return profile.to_dict()
 
 
-@router.delete("/fixtures/profiles/{profile_id}")
+@router.delete("/fixtures/profiles/{profile_id}", dependencies=EDIT)
 def delete_profile(profile_id: str):
     ctx = get_context()
     ctx.library.delete(profile_id)
     return {"ok": True}
 
 
-@router.post("/fixtures/import-qxf")
+@router.post("/fixtures/import-qxf", dependencies=EDIT)
 async def import_qxf(file: UploadFile):
     ctx = get_context()
     contents = await file.read()
@@ -170,7 +331,7 @@ class RoomIn(BaseModel):
     floor_points: list[Vec2In] = []
 
 
-@router.put("/room")
+@router.put("/room", dependencies=EDIT)
 def update_room(payload: RoomIn):
     """Redrawing the room shape only ever happens here (the 2D editor) --
     never by dragging in the 3D view, which is fixtures/objects only.
@@ -214,7 +375,7 @@ class FixtureInstanceIn(BaseModel):
     tilt_offset_deg: float = 0.0
 
 
-@router.post("/room/fixtures")
+@router.post("/room/fixtures", dependencies=EDIT)
 def add_fixture(payload: FixtureInstanceIn):
     ctx = get_context()
     if ctx.library.get(payload.profile_id) is None:
@@ -239,7 +400,7 @@ def add_fixture(payload: FixtureInstanceIn):
     return instance.to_dict()
 
 
-@router.put("/room/fixtures/{fixture_id}")
+@router.put("/room/fixtures/{fixture_id}", dependencies=EDIT)
 def update_fixture(fixture_id: str, payload: FixtureInstanceIn):
     ctx = get_context()
     if fixture_id not in ctx.engine.room.fixtures:
@@ -263,7 +424,7 @@ def update_fixture(fixture_id: str, payload: FixtureInstanceIn):
     return instance.to_dict()
 
 
-@router.delete("/room/fixtures/{fixture_id}")
+@router.delete("/room/fixtures/{fixture_id}", dependencies=EDIT)
 def delete_fixture(fixture_id: str):
     ctx = get_context()
     ctx.engine.remove_fixture(fixture_id)
@@ -279,7 +440,7 @@ class SafetyZoneIn(BaseModel):
     enabled: bool = True
 
 
-@router.post("/room/safety-zones")
+@router.post("/room/safety-zones", dependencies=EDIT)
 def add_safety_zone(payload: SafetyZoneIn):
     ctx = get_context()
     zone_id = payload.id or f"zone-{uuid.uuid4().hex[:8]}"
@@ -295,7 +456,7 @@ def add_safety_zone(payload: SafetyZoneIn):
     return zone.to_dict()
 
 
-@router.delete("/room/safety-zones/{zone_id}")
+@router.delete("/room/safety-zones/{zone_id}", dependencies=EDIT)
 def delete_safety_zone(zone_id: str):
     ctx = get_context()
     ctx.engine.room.remove_safety_zone(zone_id)
@@ -319,7 +480,7 @@ class RoomObjectIn(BaseModel):
 VALID_OBJECT_KINDS = {"wall", "person", "box", "surface"}
 
 
-@router.post("/room/objects")
+@router.post("/room/objects", dependencies=EDIT)
 def add_room_object(payload: RoomObjectIn):
     if payload.kind not in VALID_OBJECT_KINDS:
         raise HTTPException(400, f"unknown object kind {payload.kind!r}")
@@ -344,7 +505,7 @@ def add_room_object(payload: RoomObjectIn):
     return obj.to_dict()
 
 
-@router.put("/room/objects/{object_id}")
+@router.put("/room/objects/{object_id}", dependencies=EDIT)
 def update_room_object(object_id: str, payload: RoomObjectIn):
     ctx = get_context()
     if object_id not in ctx.engine.room.objects:
@@ -368,7 +529,7 @@ def update_room_object(object_id: str, payload: RoomObjectIn):
     return obj.to_dict()
 
 
-@router.delete("/room/objects/{object_id}")
+@router.delete("/room/objects/{object_id}", dependencies=EDIT)
 def delete_room_object(object_id: str):
     ctx = get_context()
     ctx.engine.room.remove_object(object_id)
@@ -384,7 +545,7 @@ class AnimationPointIn(BaseModel):
     position: Vec3In
 
 
-@router.post("/room/points")
+@router.post("/room/points", dependencies=EDIT)
 def add_animation_point(payload: AnimationPointIn):
     ctx = get_context()
     point_id = payload.id or f"pt-{uuid.uuid4().hex[:8]}"
@@ -397,7 +558,7 @@ def add_animation_point(payload: AnimationPointIn):
     return point.to_dict()
 
 
-@router.put("/room/points/{point_id}")
+@router.put("/room/points/{point_id}", dependencies=EDIT)
 def update_animation_point(point_id: str, payload: AnimationPointIn):
     ctx = get_context()
     if point_id not in ctx.engine.room.animation_points:
@@ -411,7 +572,7 @@ def update_animation_point(point_id: str, payload: AnimationPointIn):
     return point.to_dict()
 
 
-@router.delete("/room/points/{point_id}")
+@router.delete("/room/points/{point_id}", dependencies=EDIT)
 def delete_animation_point(point_id: str):
     ctx = get_context()
     ctx.engine.room.remove_animation_point(point_id)
@@ -433,7 +594,7 @@ class GroupIn(BaseModel):
     color: str = "#3a7bd5"
 
 
-@router.post("/groups")
+@router.post("/groups", dependencies=EDIT)
 def create_group(payload: GroupIn):
     ctx = get_context()
     group_id = payload.id or f"grp-{uuid.uuid4().hex[:8]}"
@@ -444,7 +605,7 @@ def create_group(payload: GroupIn):
     return ctx.engine.groups[group_id].to_dict()
 
 
-@router.put("/groups/{group_id}")
+@router.put("/groups/{group_id}", dependencies=EDIT)
 def update_group(group_id: str, payload: GroupIn):
     ctx = get_context()
     if group_id not in ctx.engine.groups:
@@ -456,7 +617,7 @@ def update_group(group_id: str, payload: GroupIn):
     return ctx.engine.groups[group_id].to_dict()
 
 
-@router.delete("/groups/{group_id}")
+@router.delete("/groups/{group_id}", dependencies=EDIT)
 def delete_group(group_id: str):
     ctx = get_context()
     if group_id == ALL_GROUP_ID:
@@ -545,7 +706,7 @@ class PanTiltIn(BaseModel):
     tilt_fine: int = 0
 
 
-@router.post("/control/pan-tilt")
+@router.post("/control/pan-tilt", dependencies=SHOW)
 def control_pan_tilt(payload: PanTiltIn):
     get_context().engine.set_raw_pan_tilt(
         payload.target_id, payload.pan, payload.tilt, payload.pan_fine, payload.tilt_fine
@@ -561,7 +722,7 @@ class AimIn(BaseModel):
     allow_unsafe: bool = False
 
 
-@router.post("/control/aim")
+@router.post("/control/aim", dependencies=SHOW)
 def control_aim(payload: AimIn):
     result = get_context().engine.aim_at_point(
         payload.target_id, Vec3(payload.x, payload.y, payload.z), payload.allow_unsafe
@@ -617,7 +778,7 @@ def list_animations():
     return [a.to_dict() for a in ctx.animations.values()]
 
 
-@router.post("/animations")
+@router.post("/animations", dependencies=EDIT)
 def save_animation(payload: AnimationIn):
     ctx = get_context()
     animation_id = payload.id or f"anim-{uuid.uuid4().hex[:8]}"
@@ -645,7 +806,7 @@ def save_animation(payload: AnimationIn):
     return animation.to_dict()
 
 
-@router.delete("/animations/{animation_id}")
+@router.delete("/animations/{animation_id}", dependencies=EDIT)
 def delete_animation(animation_id: str):
     ctx = get_context()
     ctx.stop_animation(animation_id)
@@ -654,7 +815,7 @@ def delete_animation(animation_id: str):
     return {"ok": True}
 
 
-@router.post("/animations/{animation_id}/play")
+@router.post("/animations/{animation_id}/play", dependencies=SHOW)
 def play_animation(animation_id: str):
     ctx = get_context()
     if animation_id not in ctx.animations:
@@ -693,7 +854,7 @@ def list_patterns():
     return [p.to_dict() for p in get_context().patterns.values()]
 
 
-@router.post("/patterns")
+@router.post("/patterns", dependencies=EDIT)
 def save_pattern(payload: PatternIn):
     ctx = get_context()
     pattern_id = payload.id or f"pat-{uuid.uuid4().hex[:8]}"
@@ -703,7 +864,7 @@ def save_pattern(payload: PatternIn):
     return pattern.to_dict()
 
 
-@router.delete("/patterns/{pattern_id}")
+@router.delete("/patterns/{pattern_id}", dependencies=EDIT)
 def delete_pattern(pattern_id: str):
     ctx = get_context()
     ctx.stop_pattern(pattern_id)
@@ -712,7 +873,7 @@ def delete_pattern(pattern_id: str):
     return {"ok": True}
 
 
-@router.post("/patterns/{pattern_id}/play")
+@router.post("/patterns/{pattern_id}/play", dependencies=SHOW)
 def play_pattern(pattern_id: str):
     ctx = get_context()
     if pattern_id not in ctx.patterns:
@@ -871,7 +1032,7 @@ def dmx_raw_blackout():
 
 @router.get("/snapshot")
 def snapshot():
-    return get_context().engine.snapshot()
+    return get_context().snapshot()
 
 
 # ---------------------------------------------------------------- config export/import
@@ -885,11 +1046,63 @@ def export_config():
     return get_context().export_config()
 
 
-@router.post("/config/import")
+@router.post("/config/import", dependencies=EDIT)
 def import_config(payload: dict):
     ctx = get_context()
     try:
         ctx.import_config(payload)
     except (KeyError, ValueError) as exc:
         raise HTTPException(400, f"invalid config file: {exc}")
-    return ctx.export_config()
+    return {**ctx.export_config(), "profile_updates": ctx.profile_notes}
+
+
+# ---------------------------------------------------------------- saved rooms
+#
+# Whole-venue snapshots kept in the backend (the same document as a config export). Saving,
+# loading and starting a new room are edit-mode actions; loading or starting a new room keeps the
+# room being left as "_previous" so the switch can be undone.
+
+class SavedRoomIn(BaseModel):
+    name: str
+
+
+@router.get("/rooms")
+def list_saved_rooms():
+    ctx = get_context()
+    return {"current": ctx.engine.room.name, "rooms": ctx.storage.list_saved_rooms()}
+
+
+@router.post("/rooms", dependencies=EDIT)
+def save_room(payload: SavedRoomIn):
+    ctx = get_context()
+    try:
+        saved = ctx.save_room_as(payload.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {**saved, "profile_updates": ctx.profile_notes}
+
+
+@router.post("/rooms/new", dependencies=EDIT)
+def new_room(payload: SavedRoomIn):
+    ctx = get_context()
+    ctx.new_room(payload.name)
+    return {"ok": True, "name": ctx.engine.room.name}
+
+
+@router.post("/rooms/{room_id}/load", dependencies=EDIT)
+def load_saved_room(room_id: str):
+    ctx = get_context()
+    try:
+        ctx.load_saved_room(room_id)
+    except KeyError:
+        raise HTTPException(404, "no saved room with that id")
+    except ValueError as exc:
+        raise HTTPException(400, f"could not load that room: {exc}")
+    return {"ok": True, "name": ctx.engine.room.name, "profile_updates": ctx.profile_notes}
+
+
+@router.delete("/rooms/{room_id}", dependencies=EDIT)
+def delete_saved_room(room_id: str):
+    if not get_context().delete_saved_room(room_id):
+        raise HTTPException(404, "no saved room with that id")
+    return {"ok": True}

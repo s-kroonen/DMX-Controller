@@ -12,6 +12,9 @@ export const state = {
   profiles: [],
   fixtureState: {},
   dmxStatus: {},
+  mode: "edit", // "edit" | "show" -- held by the backend, so every screen agrees (see mode.js)
+  calibration: { sweeping: false, sweep_ids: [], beam: [] }, // backend: calibration sweep / beam (edit mode)
+  calibrationPoint: null, // {x, y, z} target of the calibration tools; both 3D views draw a marker there
   selection: new Set(), // fixture ids and/or group ids
   zoneFilter: new Set(), // zone ids picked in the Zones window; empty = every zone
 

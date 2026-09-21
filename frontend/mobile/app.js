@@ -3,6 +3,9 @@ import { state, onStateChange, notifyStateChange } from "../src/state.js";
 import { loadInitialData } from "../src/main_data.js";
 import { initAim3D, resizeAim3D } from "./aim3d.js";
 import { logicalFromRaw } from "../src/roleRange.js";
+import { applyMode, initModeSwitch, onModeChange } from "../src/mode.js";
+import { mountCalibrationView } from "../src/calibrationView.js";
+import { finishCalibration } from "../src/calibration.js";
 
 // A radically simpler surface for phones than the desktop UI: instead of
 // overlaid floating windows and a 3D scene that assume a lot of screen,
@@ -30,6 +33,7 @@ function sendToSelection(call) {
 // -------------------------------------------------------------- drawers
 
 let openDrawer = null;
+let calibrationView = { refresh() {} };
 let aim3dStarted = false;
 
 function initDrawers() {
@@ -80,6 +84,7 @@ function showMainScreen(name) {
   document.querySelectorAll(".main-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.screen === name);
   });
+  if (name === "calibrate") calibrationView.refresh();
   if (name === "aim") {
     if (!aim3dStarted) {
       aim3dStarted = true;
@@ -465,14 +470,18 @@ async function renderPatternList() {
     row.innerHTML = `<span>${pattern.name}</span>`;
     const playBtn = document.createElement("button");
     playBtn.textContent = "Play";
+    playBtn.className = "show-only";
     playBtn.onclick = () => api.playPattern(pattern.id).catch(console.error);
     const stopBtn = document.createElement("button");
     stopBtn.textContent = "Stop";
+    stopBtn.className = "show-only";
     stopBtn.onclick = () => api.stopPattern(pattern.id).catch(console.error);
     const editBtn = document.createElement("button");
+    editBtn.className = "edit-only";
     editBtn.textContent = "Edit";
     editBtn.onclick = () => openPatternEditor(pattern);
     const delBtn = document.createElement("button");
+    delBtn.className = "edit-only";
     delBtn.textContent = "Delete";
     delBtn.onclick = async () => { await api.deletePattern(pattern.id); renderPatternList(); };
     row.append(playBtn, stopBtn, editBtn, delBtn);
@@ -595,14 +604,18 @@ async function renderAnimList() {
     row.innerHTML = `<span>${anim.name}</span>`;
     const playBtn = document.createElement("button");
     playBtn.textContent = "Play";
+    playBtn.className = "show-only";
     playBtn.onclick = () => api.playAnimation(anim.id).catch(console.error);
     const stopBtn = document.createElement("button");
     stopBtn.textContent = "Stop";
+    stopBtn.className = "show-only";
     stopBtn.onclick = () => api.stopAnimation(anim.id).catch(console.error);
     const editBtn = document.createElement("button");
+    editBtn.className = "edit-only";
     editBtn.textContent = "Edit";
     editBtn.onclick = () => openAnimationEditor(anim);
     const delBtn = document.createElement("button");
+    delBtn.className = "edit-only";
     delBtn.textContent = "Delete";
     delBtn.onclick = async () => { await api.deleteAnimation(anim.id); renderAnimList(); };
     row.append(playBtn, stopBtn, editBtn, delBtn);
@@ -760,8 +773,25 @@ async function bootstrap() {
   initSoundDrawer();
   initMoreDrawer();
   initBlackout();
+  initModeSwitch();
+
+  // Whatever the mode hides must not stay open: the Aim screen and the Sound drawer are show
+  // mode, the Points tab is edit mode.
+  calibrationView = mountCalibrationView(document.getElementById("cal-mobile"), { compact: true });
+  onModeChange((mode) => {
+    if (mode === "edit") {
+      if (openDrawer === "sound") closeDrawer();
+    } else if (!document.getElementById("screen-calibrate").classList.contains("hidden")) {
+      showMainScreen("color");   // the Calibrate tab is edit mode only
+      finishCalibration().catch(() => {});
+    }
+    if (mode === "show" && !document.querySelector('[data-subtab-pane="show-points"]').classList.contains("hidden")) {
+      document.querySelector('.subtab-btn[data-subtab="show-animations"]').click();
+    }
+  });
 
   onStateChange(() => {
+    applyMode();
     renderLightsDrawer();
     document.getElementById("selection-bar").textContent = selectionSummaryText();
     renderCustomCard();
@@ -782,6 +812,8 @@ async function bootstrap() {
     state.groups = snapshot.groups;
     state.fixtureState = snapshot.fixture_state;
     state.dmxStatus = snapshot.dmx_status;
+    state.mode = snapshot.mode || state.mode;
+    state.calibration = snapshot.calibration || state.calibration;
     notifyStateChange();
   });
 

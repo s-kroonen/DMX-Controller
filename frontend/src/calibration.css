@@ -1,0 +1,41 @@
+/* The calibration view, shared by the desktop Calibrate window and the phone's Calibrate screen */
+.cal-view .cal-xyz { display: flex; gap: 6px; }
+.cal-view .cal-xyz label { flex: 1; margin: 0; }
+.cal-view input[type=number] { width: 100%; }
+.cal-view .cal-nudge-row, .cal-view .cal-point-tools, .cal-view .cal-actions, .cal-view .cal-sweep-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.cal-view .cal-nudge-row button { flex: 1; min-width: 34px; padding: 3px 0; font-size: 0.75em; }
+.cal-view .cal-actions button { flex: 1; }
+.cal-view button.active { background: var(--accent); border-color: var(--accent); }
+.cal-view .cal-sweep-row label { flex: 1; margin: 0; font-size: 0.8em; }
+.cal-view .cal-sweep-btn { width: 100%; }
+.cal-view .cal-sweep-row select { flex: 2 1 100%; }
+.cal-view .cal-flags label, .cal-view .cal-head label, .cal-view .cal-sweep-row label { display: flex !important; flex-direction: row !important; align-items: center; gap: 4px; }
+.cal-view .cal-sweep-row label input { min-width: 0; }
+.cal-view .cal-step-label { display: flex; align-items: center; gap: 8px; font-size: 0.8em; margin: 8px 0 4px; }
+.cal-view .cal-step-label select { width: auto; }
+.cal-row { border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; background: #1a1d22; }
+.cal-row.lit { border-color: #c0392b; }
+.cal-row.bad .cal-status { color: #e8b24a; }
+.cal-row .cal-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.cal-row .cal-status { font-size: 0.75em; color: var(--text-dim); }
+.cal-row .cal-off { display: flex; align-items: center; gap: 3px; margin: 4px 0; }
+.cal-row .cal-off input { width: 56px; min-width: 0; text-align: center; }
+.cal-row .cal-off button { padding: 2px 8px; }
+.cal-row .cal-off-label { font-size: 0.75em; color: var(--text-dim); margin: 0 2px 0 6px; }
+.cal-row .cal-flags { display: flex; gap: 12px; font-size: 0.75em; }
+.cal-row .cal-flags label { margin: 0; }
+.cal-row .cal-read { font-size: 0.72em; color: var(--text-dim); margin: 3px 0; min-height: 1em; }
+.cal-row .cal-btns { display: flex; gap: 4px; }
+.cal-row .cal-btns button { flex: 1; padding: 3px 0; font-size: 0.8em; }
+
+/* phone: bigger touch targets */
+body.mobile .cal-view button { min-height: 38px; }
+body.mobile .cal-view input[type=number], body.mobile .cal-view select { padding: 8px; }
+body.mobile .cal-row .cal-off input { width: 64px; }
+body.mobile .cal-row .cal-off button { padding: 6px 14px; }
+body.mobile .cal-view .cal-nudge-row button { padding: 8px 0; font-size: 0.9em; }
+body.mobile .cal-view fieldset { border: 1px solid var(--panel-border); border-radius: 6px; margin: 8px 0; }
+body.mobile .cal-view label { display: flex; flex-direction: column; font-size: 0.85em; gap: 2px; }
+body.mobile .cal-view input[type=checkbox] { width: auto; margin: 0 6px 0 0; }
+
+.cal-view .hidden { display: none !important; }

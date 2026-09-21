@@ -12,6 +12,7 @@ current values, not just be write-only).
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 from typing import Iterable, Optional, Union
 
@@ -50,6 +51,8 @@ class ShowEngine:
         self.library = library
         self.dmx = dmx
         self.groups: dict[str, Group] = {}
+        # fixture id -> what it showed before the calibration beam took it over (see beam_on)
+        self._beam_backup: dict[str, dict] = {}
         self.fixture_state: dict[str, FixtureState] = {
             fid: FixtureState() for fid in room.fixtures
         }
@@ -391,6 +394,67 @@ class ShowEngine:
             if match is None:
                 continue
             self.set_custom_channel(fid, match.channel, value)
+
+    # -- calibration ----------------------------------------------------
+    #
+    # Checking a rig's calibration means pointing every head at the same spot and looking at
+    # where the beams land. That needs each head lit (dim, so it is not blinding), and the lights
+    # put back the way they were afterwards.
+
+    BEAM_LEVEL = 51   # red at ~20 %: enough to see where a head lands
+
+    def beam_on(self, fixture_ids: Iterable[str]) -> None:
+        for fid in fixture_ids:
+            if fid not in self.room.fixtures:
+                continue
+            if fid not in self._beam_backup:
+                st = self.state_for(fid)
+                self._beam_backup[fid] = {"values": dict(st.values), "zones": copy.deepcopy(st.zones)}
+            profile = self.profile_for(fid)
+            if profile.has_color():
+                self.set_color(fid, self.BEAM_LEVEL, 0, 0, white=0)
+            self.set_strobe(fid, 0)
+            self.set_dimmer(fid, 255)
+            self.set_shutter(fid, False)
+
+    def beam_off(self, fixture_ids: Optional[Iterable[str]] = None) -> None:
+        """Put the given fixtures (default: every one the beam took over) back as they were."""
+        ids = list(self._beam_backup) if fixture_ids is None else [f for f in fixture_ids if f in self._beam_backup]
+        for fid in ids:
+            saved = self._beam_backup.pop(fid)
+            if fid not in self.room.fixtures:
+                continue
+            profile = self.profile_for(fid)
+            values = saved["values"]
+            if profile.has_color():
+                if profile.has_zones():
+                    for zone in profile.zones:
+                        before = saved["zones"].get(zone.id)
+                        self.state_for(fid).zones[zone.id] = copy.deepcopy(before) if before else {
+                            "color": [0, 0, 0, 0], "dimmer": 255, "strobe": 0}
+                        self._write_zone(fid, zone)
+                else:
+                    for role in ("red", "green", "blue", "white"):
+                        if role in profile.channels:
+                            self.set_role_value(fid, role, values.get(role, 0))
+            self.set_dimmer(fid, values.get("dimmer", 0))
+
+    def beam_ids(self) -> list[str]:
+        return list(self._beam_backup)
+
+    def calibration_aim(self, fixture_ids: Iterable[str], point: Vec3) -> dict[str, dict]:
+        """Aim each fixture at `point` and report where its pan/tilt ended up, so the operator
+        can see the numbers behind what the beams do."""
+        results: dict[str, dict] = {}
+        for fid in fixture_ids:
+            if fid not in self.room.fixtures:
+                continue
+            result = dict(self.aim_at_point(fid, point)[fid])
+            values = self.state_for(fid).values
+            result["pan_dmx"] = values.get("pan")
+            result["tilt_dmx"] = values.get("tilt")
+            results[fid] = result
+        return results
 
     # -- 3D aiming ------------------------------------------------------
 

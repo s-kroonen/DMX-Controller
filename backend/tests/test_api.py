@@ -67,6 +67,7 @@ def test_aim_endpoint_blocked_by_safety_zone(client):
         "min_corner": {"x": -5, "y": -5, "z": 0},
         "max_corner": {"x": 5, "y": 5, "z": 1.8},
     })
+    client.put("/api/mode", json={"mode": "show"})           # aiming is a show-mode action
     resp = client.post("/api/control/aim", json={
         "target_id": fx["id"], "x": 1, "y": 1, "z": 0.5,
     })

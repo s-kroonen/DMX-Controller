@@ -127,6 +127,10 @@ class FixtureProfile:
     fixture_type: str = "generic"
     # role -> RoleRange; roles not listed pass straight through 1:1
     role_ranges: dict[str, RoleRange] = dataclasses.field(default_factory=dict)
+    # True once a user has edited the profile's structure in the Fixture Creator. A saved copy of a
+    # bundled profile that was NOT edited that way is just a stale snapshot of it, and is brought
+    # up to date automatically (see FixtureLibrary.refresh_overrides).
+    customized: bool = False
     # independently colored sections; empty = the fixture is one implicit "main" zone
     zones: list[Zone] = dataclasses.field(default_factory=list)
 
