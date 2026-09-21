@@ -237,6 +237,22 @@
       </div>
     </div>
 
+    <div id="panel-zones" class="floating-panel" data-panel="zones" style="display:none">
+      <div class="panel-header">Zones <span class="drag-handle">::</span><button class="panel-close">x</button></div>
+      <div class="panel-body">
+        <div class="hint" id="zones-hint"></div>
+        <div id="zones-controls" class="hidden">
+          <div id="zones-chips" class="zone-chips"></div>
+          <div class="hint">Find a light (flashes white):</div>
+          <div id="zones-identify" class="zone-chips"></div>
+          <label>Zone brightness <span class="pct" id="zones-dim-pct">100%</span>
+            <input type="range" id="zones-dim" min="0" max="100" value="100"></label>
+          <div class="hint">Colors come from the RGB window. Master dimmer, strobe and the built-in programs are in
+            the Strobe / Shutter and Custom Channels windows.</div>
+        </div>
+      </div>
+    </div>
+
     <div id="panel-custom" class="floating-panel" data-panel="custom">
       <div class="panel-header">Custom Channels <span class="drag-handle">::</span><button class="panel-close">x</button></div>
       <div class="panel-body" id="custom-sliders">
@@ -299,6 +315,7 @@
             <option value="generic">Generic</option>
             <option value="moving_head">Moving Head</option>
             <option value="par">PAR / Wash</option>
+            <option value="light_bar">Light bar / lamp bar (zones)</option>
             <option value="laser">Laser</option>
           </select>
         </label>
@@ -311,6 +328,19 @@
           <legend>Pan/tilt mechanical range (degrees)</legend>
           <label>Pan range <input id="fc-pan-range" type="number" value="540"></label>
           <label>Tilt range <input id="fc-tilt-range" type="number" value="270"></label>
+        </fieldset>
+        <fieldset>
+          <legend>Zones (independently colored sections, e.g. a light bar's spots and derbies)</legend>
+          <div class="hint">Leave empty for a normal fixture. Position: -1 = left ... +1 = right as seen looking
+            at the FRONT of the fixture (only used for the 3D picture). The list order is the order zone chases
+            walk. Named ranges of custom channels are kept as they are.</div>
+          <div class="fc-zone-tools">
+            <label>Flash on <select id="fc-zone-test-fixture"></select></label>
+            <button id="fc-zones-sort" type="button">Order left to right</button>
+          </div>
+          <div id="fc-zone-list"></div>
+          <button id="fc-add-zone" type="button">+ Add zone</button>
+          <datalist id="fc-zone-kinds"><option value="spot"><option value="derby"><option value="par"><option value="cell"></datalist>
         </fieldset>
         <fieldset>
           <legend>Custom / unmapped channels (sliders with no built-in function)</legend>

@@ -1,0 +1,212 @@
+{
+  "id": "eurolite-kls-120-fx-21ch",
+  "name": "Eurolite LED KLS-120 FX (21ch)",
+  "manufacturer": "Eurolite",
+  "mode": "21ch",
+  "channel_count": 21,
+  "fixture_type": "light_bar",
+  "channels": {
+    "dimmer": 1,
+    "strobe": 2
+  },
+  "zones": [
+    {
+      "id": "derby1",
+      "label": "Derby 1",
+      "kind": "derby",
+      "channels": {
+        "red": 12,
+        "green": 13,
+        "blue": 14,
+        "white": 15
+      },
+      "position": -1.0
+    },
+    {
+      "id": "spot1",
+      "label": "Spot 1",
+      "kind": "spot",
+      "channels": {
+        "red": 3,
+        "green": 4,
+        "blue": 5,
+        "white": 6
+      },
+      "position": -0.34
+    },
+    {
+      "id": "spot2",
+      "label": "Spot 2",
+      "kind": "spot",
+      "channels": {
+        "red": 7,
+        "green": 8,
+        "blue": 9,
+        "white": 10
+      },
+      "position": 0.34
+    },
+    {
+      "id": "derby2",
+      "label": "Derby 2",
+      "kind": "derby",
+      "channels": {
+        "red": 16,
+        "green": 17,
+        "blue": 18,
+        "white": 19
+      },
+      "position": 1.0
+    }
+  ],
+  "custom_channels": [
+    {
+      "channel": 2,
+      "label": "Spot Strobe",
+      "default": 0,
+      "min_value": 0,
+      "max_value": 255,
+      "ranges": [
+        {
+          "label": "Off",
+          "min": 0,
+          "max": 9
+        },
+        {
+          "label": "Slow",
+          "min": 10,
+          "max": 129
+        },
+        {
+          "label": "Medium",
+          "min": 130,
+          "max": 254
+        },
+        {
+          "label": "Max",
+          "min": 255,
+          "max": 255
+        }
+      ]
+    },
+    {
+      "channel": 11,
+      "label": "Derby Strobe",
+      "default": 0,
+      "min_value": 0,
+      "max_value": 255,
+      "ranges": [
+        {
+          "label": "Off",
+          "min": 0,
+          "max": 9
+        },
+        {
+          "label": "Slow",
+          "min": 10,
+          "max": 129
+        },
+        {
+          "label": "Medium",
+          "min": 130,
+          "max": 254
+        },
+        {
+          "label": "Max",
+          "min": 255,
+          "max": 255
+        }
+      ]
+    },
+    {
+      "channel": 20,
+      "label": "Derby Motor",
+      "default": 0,
+      "min_value": 0,
+      "max_value": 255,
+      "ranges": [
+        {
+          "label": "Off",
+          "min": 0,
+          "max": 9
+        },
+        {
+          "label": "Low",
+          "min": 10,
+          "max": 29
+        },
+        {
+          "label": "Medium",
+          "min": 30,
+          "max": 49
+        },
+        {
+          "label": "Fast",
+          "min": 50,
+          "max": 255
+        }
+      ]
+    },
+    {
+      "channel": 21,
+      "label": "Built-in Program (overrides colors)",
+      "default": 0,
+      "min_value": 0,
+      "max_value": 255,
+      "ranges": [
+        {
+          "label": "Off",
+          "min": 0,
+          "max": 9
+        },
+        {
+          "label": "Auto 1",
+          "min": 10,
+          "max": 49
+        },
+        {
+          "label": "Auto 2",
+          "min": 50,
+          "max": 89
+        },
+        {
+          "label": "Auto 3",
+          "min": 90,
+          "max": 129
+        },
+        {
+          "label": "Sound 1",
+          "min": 130,
+          "max": 169
+        },
+        {
+          "label": "Sound 2",
+          "min": 170,
+          "max": 209
+        },
+        {
+          "label": "Sound 3",
+          "min": 210,
+          "max": 255
+        }
+      ]
+    }
+  ],
+  "pan_range_deg": null,
+  "tilt_range_deg": null,
+  "defaults": {
+    "dimmer": 255
+  },
+  "role_ranges": {
+    "strobe": {
+      "min": 10,
+      "max": 255,
+      "zero": 0
+    }
+  },
+  "role_mirrors": {
+    "strobe": [
+      11
+    ]
+  }
+}

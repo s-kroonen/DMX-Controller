@@ -10,6 +10,7 @@ const PANELS = [
   { id: "rgb", label: "RGB / Color" },
   { id: "strobe", label: "Strobe / Shutter" },
   { id: "pantilt", label: "Pan / Tilt" },
+  { id: "zones", label: "Zones" },
   { id: "custom", label: "Custom Channels" },
   { id: "sound", label: "Sound" },
 ];

@@ -12,6 +12,7 @@ import { initDmxSetupModal, reconnectDmx } from "./dmxSetup.js";
 import { initConfigModal } from "./configTransfer.js";
 import { initWindowsMenu } from "./windowsMenu.js";
 import { initSoundPanel } from "./sound.js";
+import { initZonesPanel } from "./zones.js";
 import { initScene3D } from "./scene3d.js";
 import { initFixtureDetailsPanel, renderFixtureDetailsPanel } from "./fixtureDetails.js";
 import { loadInitialData } from "./main_data.js";
@@ -61,6 +62,7 @@ async function bootstrap() {
   await loadInitialData();
 
   initPanels();
+  initZonesPanel();
   initWindowsMenu();
   initPatchModal();
   initFixtureDetailsPanel();

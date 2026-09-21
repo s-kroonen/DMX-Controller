@@ -10,7 +10,7 @@ from ..context import get_context
 from ..dmx.dmx4all import Dmx4AllOutput, list_serial_ports
 from ..dmx.usb_procs import find_holders
 from ..fixtures.qxf_import import parse_qxf
-from ..fixtures.schema import CustomChannel, FixtureProfile, RoleRange
+from ..fixtures.schema import ChannelRange, CustomChannel, FixtureProfile, RoleRange, Zone
 from ..groups.model import Group
 from ..room.model import (
     AnimationPoint,
@@ -35,12 +35,28 @@ def list_profiles():
     return [p.to_dict() for p in ctx.library.list()]
 
 
+class ChannelRangeIn(BaseModel):
+    label: str
+    min: int
+    max: int
+    speed: bool = False
+
+
 class CustomChannelIn(BaseModel):
     channel: int
     label: str
     default: int = 0
     min_value: int = 0
     max_value: int = 255
+    ranges: list[ChannelRangeIn] = []
+
+
+class ZoneIn(BaseModel):
+    id: str
+    label: str
+    kind: str = "cell"
+    channels: dict[str, int] = {}
+    position: Optional[float] = None
 
 
 class RoleRangeIn(BaseModel):
@@ -64,6 +80,10 @@ class FixtureProfileIn(BaseModel):
     # None = keep whatever the existing profile with this id has (the fixture
     # creator UI doesn't edit ranges, so re-saving must not silently drop them)
     role_ranges: Optional[dict[str, RoleRangeIn]] = None
+    # likewise for zones: the creator UI doesn't edit them, so None keeps the existing ones
+    zones: Optional[list[ZoneIn]] = None
+    # ...and for role mirrors (extra channels that follow a role, e.g. a bar's derby strobe)
+    role_mirrors: Optional[dict[str, list[int]]] = None
 
 
 @router.post("/fixtures/profiles")
@@ -71,11 +91,24 @@ def create_or_update_profile(payload: FixtureProfileIn):
     """The fixture creator: define a new type, or edit a user-saved one."""
     ctx = get_context()
     profile_id = payload.id or f"custom-{uuid.uuid4().hex[:8]}"
+    existing = ctx.library.get(profile_id)
     if payload.role_ranges is not None:
         role_ranges = {r: RoleRange(**v.model_dump()) for r, v in payload.role_ranges.items()}
     else:
-        existing = ctx.library.get(profile_id)
         role_ranges = dict(existing.role_ranges) if existing else {}
+    if payload.zones is not None:
+        zones = [Zone(**z.model_dump()) for z in payload.zones]
+    else:
+        zones = list(existing.zones) if existing else []
+    role_mirrors = payload.role_mirrors if payload.role_mirrors is not None else (
+        dict(existing.role_mirrors) if existing else {})
+    # a custom channel saved without named ranges keeps the ones it already had
+    kept_ranges = {c.channel: c.ranges for c in existing.custom_channels} if existing else {}
+    custom_channels = []
+    for c in payload.custom_channels:
+        data = c.model_dump()
+        ranges = [ChannelRange(**r) for r in data.pop("ranges")] or list(kept_ranges.get(c.channel, []))
+        custom_channels.append(CustomChannel(**data, ranges=ranges))
     profile = FixtureProfile(
         id=profile_id,
         name=payload.name,
@@ -83,12 +116,14 @@ def create_or_update_profile(payload: FixtureProfileIn):
         mode=payload.mode,
         channel_count=payload.channel_count,
         channels=payload.channels,
-        custom_channels=[CustomChannel(**c.model_dump()) for c in payload.custom_channels],
+        custom_channels=custom_channels,
         pan_range_deg=payload.pan_range_deg,
         tilt_range_deg=payload.tilt_range_deg,
         defaults=payload.defaults,
         fixture_type=payload.fixture_type,
         role_ranges=role_ranges,
+        zones=zones,
+        role_mirrors=role_mirrors,
     )
     ctx.library.save(profile)
     return profile.to_dict()
@@ -442,12 +477,14 @@ class TargetColorIn(BaseModel):
     green: int
     blue: int
     white: Optional[int] = None
+    # limit to these zones (ids from the fixtures' profiles); None = every zone
+    zones: Optional[list[str]] = None
 
 
 @router.post("/control/color")
 def control_color(payload: TargetColorIn):
     get_context().engine.set_color(payload.target_id, payload.red, payload.green,
-                                    payload.blue, payload.white)
+                                    payload.blue, payload.white, zones=payload.zones)
     return {"ok": True}
 
 
@@ -475,6 +512,8 @@ class LightTargets(BaseModel):
 
 class LightValueIn(LightTargets):
     value: int
+    # dimmer only: brightness of just these zones (fixtures that declare zones); None = master dimmer
+    zones: Optional[list[str]] = None
 
 
 class ShutterIn(LightTargets):
@@ -483,7 +522,7 @@ class ShutterIn(LightTargets):
 
 @router.post("/control/dimmer")
 def control_dimmer(payload: LightValueIn):
-    get_context().engine.set_dimmer(payload.targets(), payload.value)
+    get_context().engine.set_dimmer(payload.targets(), payload.value, zones=payload.zones)
     return {"ok": True}
 
 

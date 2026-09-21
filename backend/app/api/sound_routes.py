@@ -105,18 +105,21 @@ class FunctionIn(BaseModel):
     targets: list[str] = []
     params: dict = {}
     enabled: bool = True
+    zones: list[str] = []   # restrict to these zones of the targets; empty = every zone
 
 
 class FunctionPatch(BaseModel):
     targets: Optional[list[str]] = None
     params: Optional[dict] = None
     enabled: Optional[bool] = None
+    zones: Optional[list[str]] = None
 
 
 @router.post("/functions")
 def audio_add_function(payload: FunctionIn):
     try:
-        fn = _sound().add_function(payload.type, payload.targets, payload.params, payload.enabled)
+        fn = _sound().add_function(payload.type, payload.targets, payload.params, payload.enabled,
+                                   zones=payload.zones)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return fn.to_dict()
@@ -124,7 +127,8 @@ def audio_add_function(payload: FunctionIn):
 
 @router.patch("/functions/{fn_id}")
 def audio_update_function(fn_id: str, payload: FunctionPatch):
-    fn = _sound().update_function(fn_id, payload.targets, payload.enabled, payload.params)
+    fn = _sound().update_function(fn_id, payload.targets, payload.enabled, payload.params,
+                                  zones=payload.zones)
     return fn.to_dict()
 
 

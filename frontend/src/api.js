@@ -49,11 +49,16 @@ export const api = {
   updateGroup: (id, group) => req("PUT", `/groups/${id}`, group),
   deleteGroup: (id) => req("DELETE", `/groups/${id}`),
 
-  setColor: (targetId, red, green, blue, white) =>
-    req("POST", "/control/color", { target_id: targetId, red, green, blue, white }),
+  // zones: optional list of zone ids (a light bar's spots/derbies); empty/omitted = every zone
+  setColor: (targetId, red, green, blue, white, zones) =>
+    req("POST", "/control/color", {
+      target_id: targetId, red, green, blue, white, zones: zones && zones.length ? zones : null,
+    }),
   // dimmer/strobe/shutter take the WHOLE selection (array of fixture/group ids) in one call:
   // the engine judges shared-vs-separate dimmer/strobe channels across the whole set.
-  setDimmer: (targetIds, value) => req("POST", "/control/dimmer", { target_ids: targetIds, value }),
+  // zones given = brightness of just those zones (fixtures that declare zones); omitted = master dimmer
+  setDimmer: (targetIds, value, zones) =>
+    req("POST", "/control/dimmer", { target_ids: targetIds, value, zones: zones && zones.length ? zones : null }),
   setStrobe: (targetIds, value) => req("POST", "/control/strobe", { target_ids: targetIds, value }),
   setShutter: (targetIds, closed) => req("POST", "/control/shutter", { target_ids: targetIds, closed }),
   setPanTilt: (targetId, pan, tilt, panFine = 0, tiltFine = 0) =>

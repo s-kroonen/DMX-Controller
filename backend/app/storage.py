@@ -12,13 +12,16 @@ one PC at a venue. A `data/` directory next to the backend holds:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from .groups.model import Group
 from .room.model import Room
 from .show.animation import Animation, PatternAnimation
 
-DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+# DMX_DATA_DIR points the app at another data folder (room, groups, sound, fixtures) --
+# for trying things out without touching the real venue data
+DEFAULT_DATA_DIR = Path(os.environ.get("DMX_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
 
 
 class Storage:

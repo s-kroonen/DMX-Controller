@@ -17,7 +17,7 @@ from typing import Iterable, Optional, Union
 
 from ..dmx.interface import DmxOutput
 from ..fixtures.library import FixtureLibrary
-from ..fixtures.schema import FixtureProfile
+from ..fixtures.schema import MAIN_ZONE_ID, FixtureProfile
 from ..groups.model import Group
 from ..room.ik import compute_pan_tilt, target_violates_safety_zones
 from ..room.model import Room, Vec3
@@ -29,10 +29,14 @@ class FixtureState:
     last_target: Optional[Vec3] = None
     blocked_by_safety_zone: Optional[str] = None  # zone id, if last aim was blocked
     shutter_closed: bool = False  # "Closed" button: dark regardless of dimmer/strobe
+    # zone id -> {"color": [r, g, b, w] (logical 0-255), "dimmer": 0-255}, for fixtures
+    # that declare zones (a light bar's spots and derbies)
+    zones: dict[str, dict] = dataclasses.field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "shutter_closed": self.shutter_closed,
+            "zones": {zid: {"color": list(z["color"]), "dimmer": z["dimmer"]} for zid, z in self.zones.items()},
             "values": dict(self.values),
             "last_target": dataclasses.asdict(self.last_target) if self.last_target else None,
             "blocked_by_safety_zone": self.blocked_by_safety_zone,
@@ -117,14 +121,80 @@ class ShowEngine:
 
     # -- high-level control, usable on a single fixture or a group ------
 
-    def set_color(self, target_id: str, red: int, green: int, blue: int,
-                  white: Optional[int] = None) -> None:
+    # -- zones ---------------------------------------------------------------
+    #
+    # A fixture can have several independently colored zones (a light bar's two
+    # spots and two derbies). `zones` arguments below are a list of zone ids, or
+    # None for "every zone". A fixture with no declared zones is one implicit
+    # "main" zone, driven through the plain red/green/blue/white roles exactly as
+    # before, so selecting zones never breaks a normal fixture: it is simply
+    # skipped if none of the named zones exist on it.
+
+    def _selected_zones(self, fixture_id: str, zones: Optional[Iterable[str]]):
+        wanted = None if zones is None else set(zones)
+        return [z for z in self.profile_for(fixture_id).zone_list() if wanted is None or z.id in wanted]
+
+    def zones_for(self, target: Union[str, Iterable[str]]) -> list[dict]:
+        """The declared zones across a target set, in first-seen order, de-duplicated
+        by id: [{"id", "label", "kind"}]. Fixtures without declared zones add none."""
+        seen: dict[str, dict] = {}
+        for fid in self.resolve_fixture_ids(target):
+            for z in self.profile_for(fid).zones:
+                seen.setdefault(z.id, {"id": z.id, "label": z.label, "kind": z.kind})
+        return list(seen.values())
+
+    def _zone_state(self, fixture_id: str, zone_id: str) -> dict:
+        return self.state_for(fixture_id).zones.setdefault(zone_id, {"color": [0, 0, 0, 0], "dimmer": 255})
+
+    def _write_zone(self, fixture_id: str, zone) -> None:
+        """Send one zone's color to the wire. A zone with its own dimmer channel gets
+        the dimmer written separately; otherwise brightness is applied by scaling the
+        color, so per-zone brightness works on fixtures that only have a master dimmer."""
+        instance = self.room.fixtures[fixture_id]
+        st = self._zone_state(fixture_id, zone.id)
+        level = st["dimmer"]
+        own_dimmer = "dimmer" in zone.channels
+        for i, role in enumerate(("red", "green", "blue", "white")):
+            offset = zone.channels.get(role)
+            if offset is None:
+                continue
+            value = st["color"][i]
+            raw = value if own_dimmer else round(value * level / 255)
+            self.dmx.set_channel(instance.channel_for(offset), raw)
+        if own_dimmer:
+            self.dmx.set_channel(instance.channel_for(zone.channels["dimmer"]), level)
+
+    def set_color(self, target_id: Union[str, Iterable[str]], red: int, green: int, blue: int,
+                  white: Optional[int] = None, zones: Optional[Iterable[str]] = None) -> None:
+        wanted = None if zones is None else list(zones)
         for fid in self.resolve_fixture_ids(target_id):
+            profile = self.profile_for(fid)
+            if profile.has_zones():
+                for zone in self._selected_zones(fid, wanted):
+                    st = self._zone_state(fid, zone.id)
+                    old_white = st["color"][3]
+                    st["color"] = [red, green, blue, old_white if white is None else white]
+                    self._write_zone(fid, zone)
+                continue
+            if wanted is not None and MAIN_ZONE_ID not in wanted:
+                continue  # zones were named and this plain fixture has none of them
             self.set_role_value(fid, "red", red)
             self.set_role_value(fid, "green", green)
             self.set_role_value(fid, "blue", blue)
             if white is not None:
                 self.set_role_value(fid, "white", white)
+
+    def set_zone_dimmer(self, target: Union[str, Iterable[str]], value: int,
+                        zones: Optional[Iterable[str]] = None) -> None:
+        """Per-zone brightness (logical 0-255) for fixtures that declare zones."""
+        value = max(0, min(255, int(value)))
+        wanted = None if zones is None else list(zones)
+        for fid in self.resolve_fixture_ids(target):
+            if not self.profile_for(fid).has_zones():
+                continue
+            for zone in self._selected_zones(fid, wanted):
+                self._zone_state(fid, zone.id)["dimmer"] = value
+                self._write_zone(fid, zone)
 
     # -- dimmer / strobe / shutter (freestyler-style) ---------------------
     #
@@ -200,12 +270,31 @@ class ShowEngine:
         if dimmer_ch is not None and (state.shutter_closed or dimmer is not None):
             send(dimmer_ch, profile.raw_value("dimmer", 0 if state.shutter_closed else dimmer))
         if strobe_ch is not None and (state.shutter_closed or strobe is not None):
-            send(strobe_ch, profile.raw_value("strobe", 0 if state.shutter_closed else strobe))
+            raw = profile.raw_value("strobe", 0 if state.shutter_closed else strobe)
+            send(strobe_ch, raw)
+            if any(c.channel == strobe_ch for c in profile.custom_channels):
+                state.values[f"custom_{strobe_ch}"] = raw      # the channel's own control follows too
+            for extra in profile.role_mirrors.get("strobe", []):   # e.g. a bar's derby strobe channel
+                send(extra, raw)
+                state.values[f"custom_{extra}"] = raw              # keep the channel's own control in sync
 
-    def set_dimmer(self, target: Union[str, Iterable[str]], value: int) -> None:
-        fixture_ids = self.resolve_fixture_ids(target)
-        all_shared = self._all_shared(fixture_ids)
-        for fid in fixture_ids:
+    def set_dimmer(self, target: Union[str, Iterable[str]], value: int,
+                   zones: Optional[Iterable[str]] = None) -> None:
+        """Master dimmer, or -- when `zones` names zones -- per-zone brightness on
+        fixtures that declare zones (and, with no master dimmer channel, on all of
+        their zones). A plain fixture just uses its master dimmer."""
+        wanted = None if zones is None else list(zones)
+        master: list[str] = []
+        for fid in self.resolve_fixture_ids(target):
+            profile = self.profile_for(fid)
+            if profile.has_zones() and (wanted is not None or profile.channel_for("dimmer") is None):
+                self.set_zone_dimmer(fid, value, wanted)
+            elif wanted is not None and not profile.has_zones() and MAIN_ZONE_ID not in wanted:
+                continue  # zones were named and this plain fixture has none of them
+            else:
+                master.append(fid)
+        all_shared = self._all_shared(master)
+        for fid in master:
             shared = self._is_shared_light_channel(fid)
             self._set_light(fid, dimmer=value, closed=False,
                             strobe=0 if (shared and all_shared) else None)
@@ -340,6 +429,7 @@ class ShowEngine:
         self.dmx.blackout()
         for state in self.fixture_state.values():
             state.values.clear()
+            state.zones.clear()
             state.last_target = None
 
     # -- snapshot for API/UI -----------------------------------------

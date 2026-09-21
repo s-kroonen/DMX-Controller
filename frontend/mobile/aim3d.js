@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { api } from "../src/api.js";
 import { state, onStateChange, notifyStateChange } from "../src/state.js";
-import { createFixtureMesh } from "../src/scene3d.js";
+import { createFixtureMesh, updateZoneGlow } from "../src/scene3d.js";
 
 // A smaller, view+tap-to-aim-only version of the desktop 3D view -- same
 // per-type fixture body models and the same beam ("light path") math via
@@ -217,6 +217,8 @@ function updateFixtures() {
 
     const beamBlocked = fixtureState && fixtureState.blocked_by_safety_zone;
     entry.beam.material.color.set(beamBlocked ? 0xff0000 : color);
+    entry.beam.visible = !entry.isLightBar;   // a bar has nothing to aim; its zones glow instead
+    if (entry.zoneMaterials) updateZoneGlow(entry, fixtureState);
   }
 }
 

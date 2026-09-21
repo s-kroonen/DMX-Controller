@@ -253,6 +253,74 @@ ranges. The bundled generic head and the Beamz MHL108 both tilt 180 degrees (up 
 side, measured), so they cannot aim below the horizon: such a target is flagged out of range and the tilt stops
 at level.
 
+## Fixtures with zones (light bars) and adding new fixture types
+
+Not every fixture is a pan/tilt head or one lamp. A light bar like the **Eurolite LED KLS-120 FX**
+(bundled as `eurolite-kls-120-fx-21ch`, 21-channel mode) is four lights in one housing: two spots
+and two derbies, each with its own RGBW. A profile describes that with **zones**:
+
+```json
+"fixture_type": "light_bar",
+"channels": { "dimmer": 1, "strobe": 2 },
+"zones": [
+  { "id": "spot1", "label": "Spot 1", "kind": "spot", "position": -1.0,
+    "channels": { "red": 3, "green": 4, "blue": 5, "white": 6 } },
+  { "id": "derby1", "label": "Derby 1", "kind": "derby", "position": -0.34,
+    "channels": { "red": 12, "green": 13, "blue": 14, "white": 15 } }
+],
+"custom_channels": [
+  { "channel": 20, "label": "Derby Motor", "ranges": [
+      { "label": "Off", "min": 0, "max": 9 }, { "label": "Low", "min": 10, "max": 29 },
+      { "label": "Medium", "min": 30, "max": 49 }, { "label": "Fast", "min": 50, "max": 255 } ] } ],
+"role_ranges": { "strobe": { "min": 10, "max": 255, "zero": 0 } },
+"role_mirrors": { "strobe": [11] }
+```
+
+- **zones**: `channels` maps red/green/blue/white (and optionally the zone's own `dimmer`) to DMX
+  offsets; `kind` groups them for quick picks ("All derbies"); `position` places the zone along the
+  fixture in the 3D picture: -1 = left ... +1 = right as seen looking at the front. The order in the
+  list is independent of it (it is the order zone chases walk), so a light bar whose lights are wired in
+  a different order than they sit is fine. A fixture with no zones is one implicit "main" zone, so
+  every other profile behaves exactly as before.
+- **custom channel `ranges`**: named spans of a channel (a motor's Low/Medium/Fast, a fixture's
+  built-in Auto/Sound programs, a strobe's Slow/Medium/Max). The Custom Channels window always shows
+  the slider across the whole channel, plus a preset button per range that jumps to the start of that
+  range; the button for the range the value is in stays lit. Without `ranges` you get just the slider.
+- **role_mirrors**: extra channels that follow a role, for a fixture whose one control only covers some
+  of its lights. On the KLS-120 FX channel 2 ("strobe") strobes only the spots and channel 11 only the
+  derbies, so `"strobe": [11]` makes the one Strobe control (and a sound Beat strobe) hit all four; the
+  Custom Channels "Spot Strobe" (ch 2) and "Derby Strobe" (ch 11) each strobe their own lights alone.
+- **role_ranges** (as for the moving heads) squeeze the logical 0-100 % dimmer/strobe into the
+  usable part of a channel, e.g. strobe DMX 10-255 with 0-9 meaning "off".
+- The **Fixture Creator** edits zones (label, kind, position, channels) and has a **Flash** button
+  per zone that flashes that zone white on a patched fixture, so you can see which physical light
+  is which while filling in positions; the Zones window has the same "Find a light" buttons.
+  Named ranges of custom channels are kept when a profile is re-saved but are edited in the
+  profile JSON (`backend/data/fixtures/*.json`, or bundle one in `backend/app/fixtures/profiles/`).
+
+In the UI:
+
+- The **Zones** window (opens when you select a zoned fixture; also in the Windows menu) picks
+  which zones the controls act on: chips per zone, quick picks per kind, nothing picked = every
+  zone. The **RGB** window then colors only those zones, and the **Zone brightness** slider dims
+  only those (on a fixture with no per-zone dimmer channel this scales the zone's color). The
+  master dimmer and strobe stay in the Strobe / Shutter window.
+- **Sound**: functions that honour zones (VU dimmer, Beat flash, Beat color chase, Color organ and
+  the new **Zone chase**, which walks the fixture's zones in turn: sequence, ping-pong,
+  checkerboard or random) get a zone picker on their card. The bar's own built-in Sound 1-3
+  programs are in the Custom Channels window.
+- **3D**: the model is picked by `fixture_type` (`buildFixtureBody` in `frontend/src/scene3d.js`;
+  unknown types get a plain box). The light bar is drawn as a mounting bar on top with a head hanging
+  below it per zone, each with the model for its `kind` (`LIGHT_HEAD_MODELS`: `spot`, `derby`, `par`;
+  add more there), glowing with its zone's live color, and no beam line since there is nothing to aim. Add a new
+  fixture family by adding a builder there; the Sound and Zones windows and the mobile Aim view work
+  from the profile data, not per-fixture code.
+- Mounting for a bar: its lights face the fixture's "home" direction, so on a stand pointing
+  forward pick *On a wall / sideways* in the Mounting picker.
+
+Trying things without touching your real venue data: in PowerShell,
+`$env:DMX_DATA_DIR = "C:\temp\dmx-test"; .\run.ps1 -Sim` runs against another data folder.
+
 ## Sound-to-light
 
 Open the **Sound** window (top bar). It works like Freestyler's audio section:
