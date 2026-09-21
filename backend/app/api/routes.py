@@ -11,7 +11,7 @@ from ..dmx.dmx4all import Dmx4AllOutput, list_serial_ports
 from ..dmx.usb_procs import find_holders
 from ..fixtures.qxf_import import parse_qxf
 from ..fixtures.schema import ChannelRange, CustomChannel, FixtureProfile, RoleRange, Zone
-from ..groups.model import Group
+from ..groups.model import ALL_GROUP_ID, Group
 from ..room.model import (
     AnimationPoint,
     FixtureInstance,
@@ -82,8 +82,6 @@ class FixtureProfileIn(BaseModel):
     role_ranges: Optional[dict[str, RoleRangeIn]] = None
     # likewise for zones: the creator UI doesn't edit them, so None keeps the existing ones
     zones: Optional[list[ZoneIn]] = None
-    # ...and for role mirrors (extra channels that follow a role, e.g. a bar's derby strobe)
-    role_mirrors: Optional[dict[str, list[int]]] = None
 
 
 @router.post("/fixtures/profiles")
@@ -100,8 +98,6 @@ def create_or_update_profile(payload: FixtureProfileIn):
         zones = [Zone(**z.model_dump()) for z in payload.zones]
     else:
         zones = list(existing.zones) if existing else []
-    role_mirrors = payload.role_mirrors if payload.role_mirrors is not None else (
-        dict(existing.role_mirrors) if existing else {})
     # a custom channel saved without named ranges keeps the ones it already had
     kept_ranges = {c.channel: c.ranges for c in existing.custom_channels} if existing else {}
     custom_channels = []
@@ -123,7 +119,6 @@ def create_or_update_profile(payload: FixtureProfileIn):
         fixture_type=payload.fixture_type,
         role_ranges=role_ranges,
         zones=zones,
-        role_mirrors=role_mirrors,
     )
     ctx.library.save(profile)
     return profile.to_dict()
@@ -446,7 +441,7 @@ def create_group(payload: GroupIn):
                   color=payload.color)
     ctx.engine.add_group(group)
     ctx.persist_groups()
-    return group.to_dict()
+    return ctx.engine.groups[group_id].to_dict()
 
 
 @router.put("/groups/{group_id}")
@@ -456,14 +451,16 @@ def update_group(group_id: str, payload: GroupIn):
         raise HTTPException(status_code=404, detail="group not found")
     group = Group(id=group_id, name=payload.name, fixture_ids=payload.fixture_ids,
                   color=payload.color)
-    ctx.engine.add_group(group)
+    ctx.engine.add_group(group)   # the "All lights" group keeps every fixture whatever is sent
     ctx.persist_groups()
-    return group.to_dict()
+    return ctx.engine.groups[group_id].to_dict()
 
 
 @router.delete("/groups/{group_id}")
 def delete_group(group_id: str):
     ctx = get_context()
+    if group_id == ALL_GROUP_ID:
+        raise HTTPException(status_code=400, detail="the All lights group is built in and cannot be deleted")
     ctx.engine.remove_group(group_id)
     ctx.persist_groups()
     return {"ok": True}
@@ -512,7 +509,8 @@ class LightTargets(BaseModel):
 
 class LightValueIn(LightTargets):
     value: int
-    # dimmer only: brightness of just these zones (fixtures that declare zones); None = master dimmer
+    # dimmer: brightness of just these zones (fixtures that declare zones); None = master dimmer
+    # strobe: strobe just these zones (fixtures whose zones have strobe channels); None = everything
     zones: Optional[list[str]] = None
 
 
@@ -528,8 +526,8 @@ def control_dimmer(payload: LightValueIn):
 
 @router.post("/control/strobe")
 def control_strobe(payload: LightValueIn):
-    get_context().engine.set_strobe(payload.targets(), payload.value)
-    return {"ok": True}
+    also = get_context().engine.set_strobe(payload.targets(), payload.value, zones=payload.zones)
+    return {"ok": True, "also_strobed": also}   # zones that share a strobe channel with a chosen one
 
 
 @router.post("/control/shutter")

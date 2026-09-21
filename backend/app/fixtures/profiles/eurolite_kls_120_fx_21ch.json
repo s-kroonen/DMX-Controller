@@ -6,8 +6,7 @@
   "channel_count": 21,
   "fixture_type": "light_bar",
   "channels": {
-    "dimmer": 1,
-    "strobe": 2
+    "dimmer": 1
   },
   "zones": [
     {
@@ -18,7 +17,8 @@
         "red": 12,
         "green": 13,
         "blue": 14,
-        "white": 15
+        "white": 15,
+        "strobe": 11
       },
       "position": -1.0
     },
@@ -30,7 +30,8 @@
         "red": 3,
         "green": 4,
         "blue": 5,
-        "white": 6
+        "white": 6,
+        "strobe": 2
       },
       "position": -0.34
     },
@@ -42,7 +43,8 @@
         "red": 7,
         "green": 8,
         "blue": 9,
-        "white": 10
+        "white": 10,
+        "strobe": 2
       },
       "position": 0.34
     },
@@ -54,70 +56,13 @@
         "red": 16,
         "green": 17,
         "blue": 18,
-        "white": 19
+        "white": 19,
+        "strobe": 11
       },
       "position": 1.0
     }
   ],
   "custom_channels": [
-    {
-      "channel": 2,
-      "label": "Spot Strobe",
-      "default": 0,
-      "min_value": 0,
-      "max_value": 255,
-      "ranges": [
-        {
-          "label": "Off",
-          "min": 0,
-          "max": 9
-        },
-        {
-          "label": "Slow",
-          "min": 10,
-          "max": 129
-        },
-        {
-          "label": "Medium",
-          "min": 130,
-          "max": 254
-        },
-        {
-          "label": "Max",
-          "min": 255,
-          "max": 255
-        }
-      ]
-    },
-    {
-      "channel": 11,
-      "label": "Derby Strobe",
-      "default": 0,
-      "min_value": 0,
-      "max_value": 255,
-      "ranges": [
-        {
-          "label": "Off",
-          "min": 0,
-          "max": 9
-        },
-        {
-          "label": "Slow",
-          "min": 10,
-          "max": 129
-        },
-        {
-          "label": "Medium",
-          "min": 130,
-          "max": 254
-        },
-        {
-          "label": "Max",
-          "min": 255,
-          "max": 255
-        }
-      ]
-    },
     {
       "channel": 20,
       "label": "Derby Motor",
@@ -203,10 +148,5 @@
       "max": 255,
       "zero": 0
     }
-  },
-  "role_mirrors": {
-    "strobe": [
-      11
-    ]
   }
 }

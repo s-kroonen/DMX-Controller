@@ -106,6 +106,19 @@ button:hover { filter: brightness(1.15); }
 .subtab-btn.active { background: var(--accent); border-color: var(--accent); }
 
 .button-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* left menu: section headers with an Add button, and an Edit mode that reveals edit/delete */
+.section-head { display: flex; justify-content: space-between; align-items: center; }
+.mini-btn { font-size: 0.72em; padding: 2px 7px; line-height: 1.3; text-transform: none; }
+.mini-btn.active { background: var(--accent); border-color: var(--accent); }
+.mini-btn.danger:hover { background: var(--danger); border-color: var(--danger); }
+#sidebar-mode { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 8px; }
+#sidebar-mode .hint { display: none; margin: 0; }
+#sidebar.editing #sidebar-mode .hint { display: inline; }
+.select-item { display: inline-flex; align-items: stretch; gap: 2px; }
+.item-tools { display: none; flex-direction: column; gap: 2px; }
+#sidebar.editing .item-tools { display: flex; }
+.item-tools .mini-btn { padding: 0 6px; flex: 1; }
 .select-btn {
   padding: 8px 10px;
   border-radius: 6px;
@@ -148,7 +161,7 @@ button:hover { filter: brightness(1.15); }
 #panel-rgb { left: 280px; }
 #panel-strobe { left: 520px; }
 #panel-pantilt { left: 760px; }
-#panel-custom { left: 1000px; top: 430px; }
+#panel-custom { left: 520px; top: 480px; }
 #panel-sound { left: 280px; top: 90px; z-index: 12; background: rgb(30, 33, 39); }
 
 .panel-header {
@@ -226,6 +239,16 @@ button:hover { filter: brightness(1.15); }
 .function-grid label { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin: 2px 0; }
 .function-grid input { width: 60px; }
 
+/* the form rules above make every input 100% wide, which stretched checkboxes across the row and
+   pushed their text onto the next line: a checkbox is a small box with its text beside it */
+#fixture-details-body input[type=checkbox], .modal-content input[type=checkbox] {
+  width: auto; margin: 0 6px 0 0; padding: 0; flex: none;
+}
+#fixture-details-body label:has(> input[type=checkbox]), .modal-content label:has(> input[type=checkbox]) {
+  display: flex; align-items: center;
+}
+.group-row .hint { margin: 0; }
+
 .patch-row, .group-row, .zone-row, .anim-row {
   display: flex;
   justify-content: space-between;
@@ -297,5 +320,11 @@ button:hover { filter: brightness(1.15); }
 .zone-row .zone-label { width: 88px; }
 .zone-row .zone-kind { width: 60px; }
 .zone-row .zone-position { width: 52px; }
-.zone-row .zone-ch { width: 38px; }
+.zone-row .zone-chs { display: flex; gap: 4px; width: 100%; margin-top: 2px; }
+.zone-row .zone-ch-wrap { display: flex; flex-direction: column; font-size: 0.65em; color: #8b93a1; }
+.zone-row .zone-ch-wrap span { margin-left: 2px; }
+.zone-row .zone-ch { width: 46px; }
+.zone-cols { font-size: 0.7em; color: var(--muted, #8b93a1); margin: 4px 0 2px; }
+.zone-warning { color: #e8b24a; margin-top: 4px; }
+.zone-strobe { margin-top: 8px; border-top: 1px solid #262b35; padding-top: 6px; }
 .zone-row .zone-flash { padding: 2px 6px; }

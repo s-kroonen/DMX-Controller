@@ -61,7 +61,7 @@ def test_export_includes_referenced_custom_profile(client):
 
     assert bundle["room"]["name"] == "Main Stage"
     assert len(bundle["room"]["fixtures"]) == 2
-    assert len(bundle["groups"]) == 1
+    assert len(bundle["groups"]) == 2      # All lights + the venue own group
     assert len(bundle["patterns"]) == 1
     assert len(bundle["animations"]) == 1
     assert bundle["audio"]["gain"] == 2.5
@@ -99,7 +99,7 @@ def test_import_restores_full_config_on_a_fresh_install(client, tmp_path, monkey
         assert "custom-abc123" in profile_ids_after
 
         groups = fresh_client.get("/api/groups").json()
-        assert len(groups) == 1
+        assert len(groups) == 2
         patterns = fresh_client.get("/api/patterns").json()
         assert len(patterns) == 1
         animations = fresh_client.get("/api/animations").json()

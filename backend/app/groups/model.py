@@ -11,6 +11,13 @@ from __future__ import annotations
 import dataclasses
 
 
+# The built-in group that always holds every fixture in the room; the engine keeps it in step
+# with patching and config loads, and it cannot be deleted or emptied.
+ALL_GROUP_ID = "all"
+ALL_GROUP_NAME = "All lights"
+ALL_GROUP_COLOR = "#ff0000"
+
+
 @dataclasses.dataclass
 class Group:
     id: str

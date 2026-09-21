@@ -18,7 +18,7 @@ from typing import Iterable, Optional, Union
 from ..dmx.interface import DmxOutput
 from ..fixtures.library import FixtureLibrary
 from ..fixtures.schema import MAIN_ZONE_ID, FixtureProfile
-from ..groups.model import Group
+from ..groups.model import ALL_GROUP_COLOR, ALL_GROUP_ID, ALL_GROUP_NAME, Group
 from ..room.ik import compute_pan_tilt, target_violates_safety_zones
 from ..room.model import Room, Vec3
 
@@ -29,14 +29,15 @@ class FixtureState:
     last_target: Optional[Vec3] = None
     blocked_by_safety_zone: Optional[str] = None  # zone id, if last aim was blocked
     shutter_closed: bool = False  # "Closed" button: dark regardless of dimmer/strobe
-    # zone id -> {"color": [r, g, b, w] (logical 0-255), "dimmer": 0-255}, for fixtures
+    # zone id -> {"color": [r, g, b, w] (logical 0-255), "dimmer": 0-255, "strobe": 0-255}, for fixtures
     # that declare zones (a light bar's spots and derbies)
     zones: dict[str, dict] = dataclasses.field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "shutter_closed": self.shutter_closed,
-            "zones": {zid: {"color": list(z["color"]), "dimmer": z["dimmer"]} for zid, z in self.zones.items()},
+            "zones": {zid: {"color": list(z["color"]), "dimmer": z["dimmer"], "strobe": z.get("strobe", 0)}
+                      for zid, z in self.zones.items()},
             "values": dict(self.values),
             "last_target": dataclasses.asdict(self.last_target) if self.last_target else None,
             "blocked_by_safety_zone": self.blocked_by_safety_zone,
@@ -53,6 +54,7 @@ class ShowEngine:
             fid: FixtureState() for fid in room.fixtures
         }
         self._apply_all_fixture_defaults()
+        self.sync_all_group()
 
     def _apply_all_fixture_defaults(self) -> None:
         for fid in self.room.fixtures:
@@ -144,7 +146,7 @@ class ShowEngine:
         return list(seen.values())
 
     def _zone_state(self, fixture_id: str, zone_id: str) -> dict:
-        return self.state_for(fixture_id).zones.setdefault(zone_id, {"color": [0, 0, 0, 0], "dimmer": 255})
+        return self.state_for(fixture_id).zones.setdefault(zone_id, {"color": [0, 0, 0, 0], "dimmer": 255, "strobe": 0})
 
     def _write_zone(self, fixture_id: str, zone) -> None:
         """Send one zone's color to the wire. A zone with its own dimmer channel gets
@@ -272,11 +274,6 @@ class ShowEngine:
         if strobe_ch is not None and (state.shutter_closed or strobe is not None):
             raw = profile.raw_value("strobe", 0 if state.shutter_closed else strobe)
             send(strobe_ch, raw)
-            if any(c.channel == strobe_ch for c in profile.custom_channels):
-                state.values[f"custom_{strobe_ch}"] = raw      # the channel's own control follows too
-            for extra in profile.role_mirrors.get("strobe", []):   # e.g. a bar's derby strobe channel
-                send(extra, raw)
-                state.values[f"custom_{extra}"] = raw              # keep the channel's own control in sync
 
     def set_dimmer(self, target: Union[str, Iterable[str]], value: int,
                    zones: Optional[Iterable[str]] = None) -> None:
@@ -299,14 +296,65 @@ class ShowEngine:
             self._set_light(fid, dimmer=value, closed=False,
                             strobe=0 if (shared and all_shared) else None)
 
-    def set_strobe(self, target: Union[str, Iterable[str]], value: int) -> None:
-        """Strobe speed, logical 0 (none) .. 255 (fastest)."""
-        fixture_ids = self.resolve_fixture_ids(target)
-        all_shared = self._all_shared(fixture_ids)
-        for fid in fixture_ids:
+    def set_strobe(self, target: Union[str, Iterable[str]], value: int,
+                   zones: Optional[Iterable[str]] = None) -> dict[str, list[str]]:
+        """Strobe speed, logical 0 (none) .. 255 (fastest). With `zones`, only those zones of
+        a fixture that gives its zones strobe channels (a light bar's spots and derbies);
+        without, everything on the fixture strobes.
+
+        Zones can share a strobe channel (the bar's two spots are on one), in which case
+        strobing one strobes the others too. Returns {fixture_id: [zone ids that strobed
+        without being asked to]} so the UI can say so."""
+        value = max(0, min(255, int(value)))
+        wanted = None if zones is None else list(zones)
+        also: dict[str, list[str]] = {}
+        whole: list[str] = []          # fixtures driven through their one fixture-wide strobe channel
+        for fid in self.resolve_fixture_ids(target):
+            profile = self.profile_for(fid)
+            if profile.has_zone_strobe():
+                dragged = self._set_zone_strobe(fid, value, wanted)
+                if dragged:
+                    also[fid] = dragged
+                self._set_light(fid, closed=False)
+                if wanted is None and (profile.channel_for("strobe") or profile.channel_for("shutter")):
+                    whole.append(fid)
+                continue
+            if wanted is not None and not profile.has_zones() and MAIN_ZONE_ID not in wanted:
+                continue  # zones were named and this plain fixture has none of them
+            whole.append(fid)
+        all_shared = self._all_shared(whole)
+        for fid in whole:
             shared = self._is_shared_light_channel(fid)
             self._set_light(fid, strobe=value, closed=False,
                             dimmer=0 if (shared and all_shared and value > 0) else None)
+        return also
+
+    def _silence_zone_strobe(self, fixture_id: str) -> None:
+        profile = self.profile_for(fixture_id)
+        instance = self.room.fixtures[fixture_id]
+        for offset in {z.channels["strobe"] for z in profile.zones if "strobe" in z.channels}:
+            self.dmx.set_channel(instance.channel_for(offset), profile.raw_value("strobe", 0))
+
+    def _set_zone_strobe(self, fixture_id: str, value: int, wanted: Optional[list[str]]) -> list[str]:
+        """Write the strobe channel of each wanted zone that has one; every zone on a shared
+        channel takes the value, since it is one physical channel. Returns the zones that
+        strobed although they were not asked for."""
+        profile = self.profile_for(fixture_id)
+        instance = self.room.fixtures[fixture_id]
+        chosen = {z.id for z in self._selected_zones(fixture_id, wanted)}
+        channels = {z.channels["strobe"] for z in profile.zones if z.id in chosen and "strobe" in z.channels}
+        raw = profile.raw_value("strobe", value)
+        for offset in channels:
+            self.dmx.set_channel(instance.channel_for(offset), raw)
+        dragged: list[str] = []
+        for z in profile.zones:
+            if z.channels.get("strobe") in channels:
+                self._zone_state(fixture_id, z.id)["strobe"] = value
+                if z.id not in chosen:
+                    dragged.append(z.id)
+        if wanted is None:
+            self.state_for(fixture_id).values["strobe"] = value
+        return dragged
 
     def set_shutter(self, target: Union[str, Iterable[str]], closed: bool) -> None:
         """Closed: dark, dimmer/strobe values are remembered. Open: light on,
@@ -315,10 +363,14 @@ class ShowEngine:
         for fid in self.resolve_fixture_ids(target):
             if closed:
                 self._set_light(fid, closed=True)
+                if self.profile_for(fid).has_zone_strobe():
+                    self._silence_zone_strobe(fid)   # dark means dark; the strobe setting is remembered
                 continue
             dimmer = None
             if self._is_shared_light_channel(fid) and not self.state_for(fid).values.get("dimmer"):
                 dimmer = 255
+            if self.profile_for(fid).has_zone_strobe():
+                self._set_zone_strobe(fid, 0, None)
             self._set_light(fid, closed=False, strobe=0, dimmer=dimmer)
 
     def set_raw_pan_tilt(self, target_id: str, pan: int, tilt: int,
@@ -401,6 +453,7 @@ class ShowEngine:
         profile = self.profile_for(instance.id)
         for role, value in profile.defaults.items():
             self.set_role_value(instance.id, role, value)
+        self.sync_all_group()
 
     def remove_fixture(self, fixture_id: str) -> None:
         self.room.remove_fixture(fixture_id)
@@ -408,12 +461,38 @@ class ShowEngine:
         for group in self.groups.values():
             if fixture_id in group.fixture_ids:
                 group.fixture_ids.remove(fixture_id)
+        self.sync_all_group()
 
     def add_group(self, group: Group) -> None:
         self.groups[group.id] = group
+        self.sync_all_group()
 
     def remove_group(self, group_id: str) -> None:
+        if group_id == ALL_GROUP_ID:
+            return  # the "All lights" group is built in
         self.groups.pop(group_id, None)
+
+    def set_groups(self, groups: Iterable[Group]) -> None:
+        """Replace every group (config import / startup)."""
+        self.groups = {g.id: g for g in groups}
+        self.sync_all_group()
+
+    def sync_all_group(self) -> bool:
+        """Make the built-in "All lights" group exist and hold every fixture in the room, in
+        patch order. Called after anything that can change the fixtures or the groups, so a
+        light can never be missing from it. Returns True if anything had to change."""
+        everyone = list(self.room.fixtures)
+        group = self.groups.get(ALL_GROUP_ID)
+        if group is None:
+            self.groups[ALL_GROUP_ID] = Group(id=ALL_GROUP_ID, name=ALL_GROUP_NAME, fixture_ids=everyone,
+                                             color=ALL_GROUP_COLOR)
+            return True
+        # keep the order the group already has, then add newcomers
+        ordered = [f for f in group.fixture_ids if f in self.room.fixtures]
+        ordered += [f for f in everyone if f not in ordered]
+        changed = ordered != group.fixture_ids
+        group.fixture_ids = ordered
+        return changed
 
     def load_room(self, room: Room) -> None:
         """Replace the live room wholesale (config import) -- old fixture ids
@@ -424,6 +503,7 @@ class ShowEngine:
         self.room = room
         self.fixture_state = {fid: FixtureState() for fid in room.fixtures}
         self._apply_all_fixture_defaults()
+        self.sync_all_group()
 
     def blackout(self) -> None:
         self.dmx.blackout()

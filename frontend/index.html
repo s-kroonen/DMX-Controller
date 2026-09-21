@@ -54,12 +54,18 @@
 
     <div id="main">
       <aside id="sidebar">
+        <div id="sidebar-mode">
+          <span class="hint" id="sidebar-mode-hint">Edit mode: &#9998; edits, &#10005; deletes</span>
+          <button type="button" id="sidebar-edit" class="mini-btn" title="Show edit and delete buttons on groups and fixtures">Edit</button>
+        </div>
         <div class="sidebar-section">
-          <h3>Groups</h3>
+          <h3 class="section-head">Groups
+            <button type="button" id="group-add" class="mini-btn" title="Add a group">+ Add</button></h3>
           <div id="group-buttons" class="button-grid"></div>
         </div>
         <div class="sidebar-section">
-          <h3>Fixtures</h3>
+          <h3 class="section-head">Fixtures
+            <button type="button" id="fixture-add" class="mini-btn" title="Patch a new fixture">+ Add</button></h3>
           <div id="fixture-buttons" class="button-grid"></div>
         </div>
         <div class="sidebar-section" id="fixture-details-section">
@@ -113,6 +119,7 @@
               </div>
 
               <div class="subtab-pane hidden" data-subtab-pane="groups">
+                <div class="hint">Groups are added, edited and deleted from the Groups menu (Edit).</div>
                 <div id="fd-groups"></div>
               </div>
 
@@ -247,8 +254,19 @@
           <div id="zones-identify" class="zone-chips"></div>
           <label>Zone brightness <span class="pct" id="zones-dim-pct">100%</span>
             <input type="range" id="zones-dim" min="0" max="100" value="100"></label>
-          <div class="hint">Colors come from the RGB window. Master dimmer, strobe and the built-in programs are in
-            the Strobe / Shutter and Custom Channels windows.</div>
+          <div class="zone-strobe">
+            <label>Strobe <span class="pct" id="zones-strobe-pct">0%</span>
+              <input type="range" id="zones-strobe" min="0" max="100" value="0"></label>
+            <div class="btn-row" id="zones-strobe-presets">
+              <button type="button" data-zstrobe="0">Off</button>
+              <button type="button" data-zstrobe="20">Slow</button>
+              <button type="button" data-zstrobe="50">Med</button>
+              <button type="button" data-zstrobe="100">Max</button>
+            </div>
+            <div class="hint zone-warning hidden" id="zones-strobe-warning"></div>
+          </div>
+          <div class="hint">Colors come from the RGB window. The master dimmer is in the Strobe / Shutter window,
+            the built-in programs and the derby motor in Custom Channels.</div>
         </div>
       </div>
     </div>
@@ -263,7 +281,7 @@
     <!-- Modals -->
     <div id="modal-patch" class="modal hidden">
       <div class="modal-content">
-        <h2>Patch Fixture <button class="modal-close">x</button></h2>
+        <h2><span id="patch-title">Patch Fixture</span> <button class="modal-close">x</button></h2>
         <label>Name <input id="patch-name" type="text" placeholder="Moving Head 1"></label>
         <label>Profile
           <select id="patch-profile"></select>
@@ -285,14 +303,18 @@
         <label><input id="patch-invert-pan" type="checkbox"> Invert pan</label>
         <label><input id="patch-invert-tilt" type="checkbox"> Invert tilt</label>
         <button id="patch-submit" class="primary-btn">Add Fixture</button>
-        <hr>
-        <h3>Patched fixtures</h3>
-        <div id="patch-list"></div>
-        <hr>
-        <h3>Groups</h3>
-        <label>New group name <input id="group-name-input" type="text" placeholder="Front Wash"></label>
-        <div id="group-fixture-picker"></div>
-        <button id="group-create-btn">Create Group</button>
+      </div>
+    </div>
+
+    <div id="modal-group" class="modal hidden">
+      <div class="modal-content">
+        <h2><span id="group-modal-title">New group</span> <button class="modal-close">x</button></h2>
+        <label>Name <input id="group-name" type="text" placeholder="Front wash"></label>
+        <label>Color <input id="group-color" type="color" value="#3a7bd5"></label>
+        <div class="hint hidden" id="group-all-note">This group always holds every fixture; you can rename and recolor it.</div>
+        <h3>Fixtures in this group</h3>
+        <div id="group-fixture-checks"></div>
+        <button id="group-save" class="primary-btn">Create group</button>
       </div>
     </div>
 
@@ -333,7 +355,10 @@
           <legend>Zones (independently colored sections, e.g. a light bar's spots and derbies)</legend>
           <div class="hint">Leave empty for a normal fixture. Position: -1 = left ... +1 = right as seen looking
             at the FRONT of the fixture (only used for the 3D picture). The list order is the order zone chases
-            walk. Named ranges of custom channels are kept as they are.</div>
+            walk. Named ranges of custom channels are kept as they are. A zone can own a channel for each of
+            its functions: color (R G B W), its own dimmer (Dim) and its strobe (Strobe). Zones may share a
+            channel (two spots on one strobe channel); the Zones window then warns that they strobe together.
+            Map a function here instead of adding a custom channel, so it gets a proper control.</div>
           <div class="fc-zone-tools">
             <label>Flash on <select id="fc-zone-test-fixture"></select></label>
             <button id="fc-zones-sort" type="button">Order left to right</button>

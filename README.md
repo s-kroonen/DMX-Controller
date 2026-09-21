@@ -213,8 +213,15 @@ against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
     inversion, and a pan/tilt calibration offset trim), and **Groups**
     (membership checkboxes) -- for editing or deleting that one fixture.
     It's collapsible, and whether it's collapsed persists across a refresh
-    (localStorage, like the floating panels). The Patch screen stays
-    add-only.
+    (localStorage, like the floating panels).
+  - The **Groups** and **Fixtures** sections of the left menu manage
+    themselves: **+ Add** creates a group (name, colour, which fixtures) or
+    opens the Patch window for a new fixture, and the **Edit** button at
+    the top of the menu shows a pencil and a cross on every entry (edit
+    opens the group dialog or the Patch window filled in with that fixture;
+    the cross asks, then deletes). Outside edit mode those buttons are
+    hidden. The built-in All lights group can be edited (name, colour) but
+    not deleted.
   - Fixtures render with a model shaped for their `fixture_type` --
     moving head (base/yoke/head), smoke machine (box + nozzle), PAR can
     (cylinder), or a plain box for anything else -- with a bright green
@@ -253,6 +260,13 @@ ranges. The bundled generic head and the Beamz MHL108 both tilt 180 degrees (up 
 side, measured), so they cannot aim below the horizon: such a target is flagged out of range and the tilt stops
 at level.
 
+## The "All lights" group
+
+`All lights` is built in: it always contains every fixture in the room. The backend adds a fixture
+to it when you patch one, removes it when you delete one, and repairs it on startup and on a config
+import (a config with no groups, or with a stale `All lights`, still ends up with every fixture in
+it). It cannot be deleted or emptied; its name and colour can be changed.
+
 ## Fixtures with zones (light bars) and adding new fixture types
 
 Not every fixture is a pan/tilt head or one lamp. A light bar like the **Eurolite LED KLS-120 FX**
@@ -261,23 +275,24 @@ and two derbies, each with its own RGBW. A profile describes that with **zones**
 
 ```json
 "fixture_type": "light_bar",
-"channels": { "dimmer": 1, "strobe": 2 },
+"channels": { "dimmer": 1 },
 "zones": [
   { "id": "spot1", "label": "Spot 1", "kind": "spot", "position": -1.0,
-    "channels": { "red": 3, "green": 4, "blue": 5, "white": 6 } },
+    "channels": { "red": 3, "green": 4, "blue": 5, "white": 6, "strobe": 2 } },
   { "id": "derby1", "label": "Derby 1", "kind": "derby", "position": -0.34,
-    "channels": { "red": 12, "green": 13, "blue": 14, "white": 15 } }
+    "channels": { "red": 12, "green": 13, "blue": 14, "white": 15, "strobe": 11 } }
 ],
 "custom_channels": [
   { "channel": 20, "label": "Derby Motor", "ranges": [
       { "label": "Off", "min": 0, "max": 9 }, { "label": "Low", "min": 10, "max": 29 },
       { "label": "Medium", "min": 30, "max": 49 }, { "label": "Fast", "min": 50, "max": 255 } ] } ],
-"role_ranges": { "strobe": { "min": 10, "max": 255, "zero": 0 } },
-"role_mirrors": { "strobe": [11] }
+"role_ranges": { "strobe": { "min": 10, "max": 255, "zero": 0 } }
 ```
 
-- **zones**: `channels` maps red/green/blue/white (and optionally the zone's own `dimmer`) to DMX
-  offsets; `kind` groups them for quick picks ("All derbies"); `position` places the zone along the
+- **zones**: `channels` maps the zone's functions to DMX offsets: red/green/blue/white, optionally its
+  own `dimmer` and its `strobe`. Zones may share a channel (the KLS's two spots are on one strobe
+  channel, the two derbies on another), which means they cannot be strobed apart; the Zones window says
+  so. Map a function on the zone instead of leaving it a custom channel, so it gets a proper control; `kind` groups them for quick picks ("All derbies"); `position` places the zone along the
   fixture in the 3D picture: -1 = left ... +1 = right as seen looking at the front. The order in the
   list is independent of it (it is the order zone chases walk), so a light bar whose lights are wired in
   a different order than they sit is fine. A fixture with no zones is one implicit "main" zone, so
@@ -286,13 +301,16 @@ and two derbies, each with its own RGBW. A profile describes that with **zones**
   built-in Auto/Sound programs, a strobe's Slow/Medium/Max). The Custom Channels window always shows
   the slider across the whole channel, plus a preset button per range that jumps to the start of that
   range; the button for the range the value is in stays lit. Without `ranges` you get just the slider.
-- **role_mirrors**: extra channels that follow a role, for a fixture whose one control only covers some
-  of its lights. On the KLS-120 FX channel 2 ("strobe") strobes only the spots and channel 11 only the
-  derbies, so `"strobe": [11]` makes the one Strobe control (and a sound Beat strobe) hit all four; the
-  Custom Channels "Spot Strobe" (ch 2) and "Derby Strobe" (ch 11) each strobe their own lights alone.
+- **strobe per zone**: the Zones window has a Strobe slider and Off/Slow/Med/Max presets that strobe the
+  chosen zones (nothing chosen = all); the Strobe / Shutter window and a sound Beat strobe strobe every
+  strobe channel of the fixture, and a sound Beat strobe can be limited to zones like the other zone
+  functions. On the real KLS-120 FX channel 2 strobes only the spots and channel 11 only the derbies.
+  A strobe channel that is shared by zones you did not pick strobes them too, and the window warns
+  about it.
 - **role_ranges** (as for the moving heads) squeeze the logical 0-100 % dimmer/strobe into the
   usable part of a channel, e.g. strobe DMX 10-255 with 0-9 meaning "off".
-- The **Fixture Creator** edits zones (label, kind, position, channels) and has a **Flash** button
+- The **Fixture Creator** edits zones (label, kind, position, and a channel each for R G B W, Dim and
+  Strobe) and has a **Flash** button
   per zone that flashes that zone white on a patched fixture, so you can see which physical light
   is which while filling in positions; the Zones window has the same "Find a light" buttons.
   Named ranges of custom channels are kept when a profile is re-saved but are edited in the

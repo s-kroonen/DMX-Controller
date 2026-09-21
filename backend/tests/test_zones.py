@@ -46,18 +46,28 @@ def vals(engine, channels):
     return [engine.dmx.get_channel(c) for c in channels]
 
 
+def profile_raw(logical: int) -> int:
+    """The DMX value the KLS profile sends for a logical strobe speed."""
+    return FixtureLibrary().get(KLS).raw_value("strobe", logical)
+
+
+
+
 # ---- the profile ---------------------------------------------------------------------
 
 def test_kls_channel_map_matches_the_manufacturers_21ch_table():
     p = FixtureLibrary().get(KLS)
     assert p.channel_count == 21 and p.fixture_type == "light_bar"
-    assert p.channels == {"dimmer": 1, "strobe": 2}
+    assert p.channels == {"dimmer": 1}                       # strobe lives on the zones
     zones = {z.id: z for z in p.zones}
     assert list(zones) == ["derby1", "spot1", "spot2", "derby2"]     # left to right as seen from the front
-    assert zones["spot1"].channels == {"red": 3, "green": 4, "blue": 5, "white": 6}
-    assert zones["spot2"].channels == {"red": 7, "green": 8, "blue": 9, "white": 10}
-    assert zones["derby1"].channels == {"red": 12, "green": 13, "blue": 14, "white": 15}
-    assert zones["derby2"].channels == {"red": 16, "green": 17, "blue": 18, "white": 19}
+    def colors(z):
+        return {r: c for r, c in z.channels.items() if r != "strobe"}
+
+    assert colors(zones["spot1"]) == {"red": 3, "green": 4, "blue": 5, "white": 6}
+    assert colors(zones["spot2"]) == {"red": 7, "green": 8, "blue": 9, "white": 10}
+    assert colors(zones["derby1"]) == {"red": 12, "green": 13, "blue": 14, "white": 15}
+    assert colors(zones["derby2"]) == {"red": 16, "green": 17, "blue": 18, "white": 19}
     assert [z.kind for z in p.zones] == ["derby", "spot", "spot", "derby"]
     used = {c for z in p.zones for c in z.channels.values()} | set(p.channels.values()) \
         | {c.channel for c in p.custom_channels}
@@ -66,22 +76,21 @@ def test_kls_channel_map_matches_the_manufacturers_21ch_table():
 
 
 def test_kls_custom_channels_carry_the_documented_ranges():
+    """Only what has no menu of its own stays a custom channel: the derby motor and the built-in
+    programs. Strobe is a zone function, and the dimmer and colors have their own controls."""
     p = FixtureLibrary().get(KLS)
     by = {c.channel: c for c in p.custom_channels}
-    strobe_presets = [("Off", 0, 9), ("Slow", 10, 129), ("Medium", 130, 254), ("Max", 255, 255)]
-    assert by[2].label == "Spot Strobe" and by[11].label == "Derby Strobe"   # both strobes have their own control
-    assert [(r.label, r.min, r.max) for r in by[2].ranges] == strobe_presets
-    assert [(r.label, r.min, r.max) for r in by[11].ranges] == strobe_presets
+    assert sorted(by) == [20, 21]
     assert [(r.label, r.min, r.max) for r in by[20].ranges] == [
         ("Off", 0, 9), ("Low", 10, 29), ("Medium", 30, 49), ("Fast", 50, 255)]
     assert [(r.label, r.min, r.max) for r in by[21].ranges] == [
         ("Off", 0, 9), ("Auto 1", 10, 49), ("Auto 2", 50, 89), ("Auto 3", 90, 129),
         ("Sound 1", 130, 169), ("Sound 2", 170, 209), ("Sound 3", 210, 255)]
     # the ranges are presets: they tile the whole channel, so the slider and buttons always agree
-    for ch in (2, 11, 20, 21):
+    for ch in (20, 21):
         spans = by[ch].ranges
         assert spans[0].min == 0 and spans[-1].max == 255
-        assert all(a.max + 1 == b.min for a, b in zip(spans, spans[1:]))
+        assert all(x.max + 1 == y.min for x, y in zip(spans, spans[1:]))
 
 
 def test_master_strobe_uses_10_to_255_and_zero_is_off():
@@ -96,7 +105,7 @@ def test_profile_roundtrips_through_json_with_zones_and_ranges():
     again = FixtureProfile.from_dict(json.loads(json.dumps(p.to_dict())))
     assert [z.id for z in again.zones] == [z.id for z in p.zones]
     assert again.zones[0].channels["blue"] == 14
-    assert again.custom_channels[3].ranges[6] == ChannelRange("Sound 3", 210, 255)
+    assert again.custom_channels[1].ranges[6] == ChannelRange("Sound 3", 210, 255)
 
 
 def test_a_plain_fixture_is_one_implicit_main_zone():
@@ -167,15 +176,13 @@ def test_custom_channels_write_their_own_dmx_channel(engine):
     assert engine.dmx.get_channel(dmx(20)) == 40
     engine.set_custom("bar", "Built-in Program (overrides colors)", 175)
     assert engine.dmx.get_channel(dmx(21)) == 175
-    engine.set_custom("bar", "Derby Strobe", 120)
-    assert engine.dmx.get_channel(dmx(11)) == 120
 
 
 def test_zone_state_is_reported_for_the_ui_and_cleared_by_blackout(engine):
     engine.set_color("bar", 1, 2, 3, white=4, zones=["spot1"])
     engine.set_dimmer("bar", 77, zones=["spot1"])
     zones = engine.state_for("bar").to_dict()["zones"]
-    assert zones["spot1"] == {"color": [1, 2, 3, 4], "dimmer": 77}
+    assert zones["spot1"] == {"color": [1, 2, 3, 4], "dimmer": 77, "strobe": 0}
     assert "spot2" not in zones
     assert "zones" in engine.snapshot()["fixture_state"]["bar"]
     engine.blackout()
@@ -368,7 +375,7 @@ def test_function_types_say_which_ones_use_zones():
 
     uses = {t["type"]: t["uses_zones"] for t in function_types_for_ui()}
     assert uses["zone_chase"] and uses["beat_color"] and uses["vu_dimmer"] and uses["color_organ"]
-    assert not uses["beat_movement"] and not uses["beat_strobe"]
+    assert uses["beat_strobe"] and not uses["beat_movement"]
 
 
 # ---- API ---------------------------------------------------------------------------------------------
@@ -396,7 +403,7 @@ def test_api_color_and_dimmer_take_a_zone_list(client):
     assert client.post("/api/control/dimmer", json={"target_ids": ["bar"], "value": 100,
                                                       "zones": ["spot2"]}).status_code == 200
     zones = client.get("/api/snapshot").json()["fixture_state"]["bar"]["zones"]
-    assert zones["spot2"] == {"color": [10, 20, 30, 0], "dimmer": 100}
+    assert zones["spot2"] == {"color": [10, 20, 30, 0], "dimmer": 100, "strobe": 0}
     assert "spot1" not in zones
 
 
@@ -404,7 +411,7 @@ def test_api_serves_zones_and_ranges_in_the_profile(client):
     profiles = client.get("/api/fixtures/profiles").json()
     kls = next(p for p in profiles if p["id"] == KLS)
     assert [z["id"] for z in kls["zones"]] == ["derby1", "spot1", "spot2", "derby2"]
-    assert kls["custom_channels"][2]["ranges"][3] == {"label": "Fast", "min": 50, "max": 255, "speed": False}
+    assert kls["custom_channels"][0]["ranges"][3] == {"label": "Fast", "min": 50, "max": 255, "speed": False}
 
 
 def test_resaving_a_profile_from_the_creator_keeps_zones_and_channel_ranges(client):
@@ -415,7 +422,7 @@ def test_resaving_a_profile_from_the_creator_keeps_zones_and_channel_ranges(clie
         c["ranges"] = []                                      # ...and no named ranges
     saved = client.post("/api/fixtures/profiles", json=kls).json()
     assert [z["id"] for z in saved["zones"]] == ["derby1", "spot1", "spot2", "derby2"]
-    assert len(saved["custom_channels"][3]["ranges"]) == 7
+    assert len(saved["custom_channels"][1]["ranges"]) == 7
 
 
 def test_api_sound_function_zones(client):
@@ -470,46 +477,87 @@ def test_kls_layout_matches_the_real_bar_left_to_right_from_the_front():
     assert [z.kind for z in sorted(p.zones, key=lambda z: z.position)] == ["derby", "spot", "spot", "derby"]
 
 
-# ---- one strobe control strobes everything: role mirrors ------------------------------------------
+# ---- strobe per zone -----------------------------------------------------------------------------
 
-def test_kls_master_strobe_also_drives_the_derby_strobe_channel(engine):
-    """Measured on the real bar: channel 2 alone strobes only the spots and channel 11 only the
-    derbies, so the single Strobe control has to write both."""
+def test_kls_zones_carry_the_strobe_channels_measured_on_the_real_bar():
+    """Channel 2 strobes only the spots and channel 11 only the derbies."""
+    p = FixtureLibrary().get(KLS)
+    assert {z.id: z.channels["strobe"] for z in p.zones} == {"derby1": 11, "spot1": 2, "spot2": 2, "derby2": 11}
+    assert p.has_strobe() and p.has_zone_strobe()
+
+
+def test_strobe_with_no_zones_named_strobes_everything(engine):
     engine.set_strobe("bar", 255)
     assert engine.dmx.get_channel(dmx(2)) == 255 and engine.dmx.get_channel(dmx(11)) == 255
     engine.set_strobe("bar", 1)
-    assert engine.dmx.get_channel(dmx(2)) == 10 and engine.dmx.get_channel(dmx(11)) == 10
+    assert engine.dmx.get_channel(dmx(2)) == 10 and engine.dmx.get_channel(dmx(11)) == 10   # 0-9 is "none"
     engine.set_strobe("bar", 0)
     assert engine.dmx.get_channel(dmx(2)) == 0 and engine.dmx.get_channel(dmx(11)) == 0
-    assert engine.state_for("bar").values["custom_11"] == 0        # the Derby Strobe control follows
+    assert engine.state_for("bar").values["strobe"] == 0
 
 
-def test_the_derby_strobe_control_still_works_on_its_own(engine):
-    engine.set_custom("bar", "Derby Strobe", 200)
-    assert engine.dmx.get_channel(dmx(11)) == 200 and engine.dmx.get_channel(dmx(2)) == 0
+def test_strobing_one_derby_writes_the_derby_channel_only(engine):
+    also = engine.set_strobe("bar", 200, zones=["derby1"])
+    assert engine.dmx.get_channel(dmx(11)) == profile_raw(200) and engine.dmx.get_channel(dmx(2)) == 0
+    assert also == {"bar": ["derby2"]}                           # derby 2 shares the channel, so it strobes too
+    zones = engine.state_for("bar").to_dict()["zones"]
+    assert zones["derby1"]["strobe"] == 200 and zones["derby2"]["strobe"] == 200
+    assert "spot1" not in zones or zones["spot1"]["strobe"] == 0
 
 
-def test_closing_the_shutter_also_stops_the_derby_strobe(engine):
+def test_strobing_one_spot_writes_the_spot_channel_and_reports_the_other_spot(engine):
+    also = engine.set_strobe("bar", 130, zones=["spot2"])
+    assert engine.dmx.get_channel(dmx(2)) == profile_raw(130) and engine.dmx.get_channel(dmx(11)) == 0
+    assert also == {"bar": ["spot1"]}
+
+
+def test_strobing_all_spots_reports_nothing_extra(engine):
+    assert engine.set_strobe("bar", 130, zones=["spot1", "spot2"]) == {}
+    assert engine.dmx.get_channel(dmx(11)) == 0
+
+
+def test_strobing_a_spot_and_a_derby_writes_both_channels(engine):
+    engine.set_strobe("bar", 255, zones=["spot1", "derby2"])
+    assert engine.dmx.get_channel(dmx(2)) == 255 and engine.dmx.get_channel(dmx(11)) == 255
+
+
+def test_profile_reports_which_unchosen_zones_share_a_strobe_channel():
+    p = FixtureLibrary().get(KLS)
+    assert p.zone_strobe_sharing(["spot1"]) == ["spot2"]
+    assert p.zone_strobe_sharing(["spot1", "spot2"]) == []
+    assert p.zone_strobe_sharing(["derby1", "spot1"]) == ["spot2", "derby2"]
+
+
+def test_zone_strobe_leaves_a_plain_fixture_alone_unless_main_is_named(engine):
+    engine.set_strobe(["bar", "par"], 200, zones=["derby1"])
+    assert engine.dmx.get_channel(dmx(11)) == profile_raw(200)
+
+
+def test_opening_the_shutter_stops_zone_strobes(engine):
+    engine.set_strobe("bar", 200)
+    engine.set_shutter("bar", False)
+    assert engine.dmx.get_channel(dmx(2)) == 0 and engine.dmx.get_channel(dmx(11)) == 0
+    assert engine.state_for("bar").to_dict()["zones"]["spot1"]["strobe"] == 0
+
+
+def test_closing_the_shutter_silences_the_strobe_channels(engine):
     engine.set_strobe("bar", 200)
     engine.set_shutter("bar", True)
     assert engine.dmx.get_channel(dmx(2)) == 0 and engine.dmx.get_channel(dmx(11)) == 0
 
 
-def test_role_mirrors_round_trip_and_survive_a_creator_resave(client):
-    kls = next(p for p in client.get("/api/fixtures/profiles").json() if p["id"] == KLS)
-    assert kls["role_mirrors"] == {"strobe": [11]}
-    kls.pop("role_mirrors")                                       # the creator UI doesn't send them
-    saved = client.post("/api/fixtures/profiles", json=kls).json()
-    assert saved["role_mirrors"] == {"strobe": [11]}
+def test_api_strobe_takes_zones_and_says_who_else_strobed(client):
+    client.post("/api/room/fixtures", json={"id": "bar", "name": "Bar", "profile_id": KLS, "start_address": BASE})
+    r = client.post("/api/control/strobe", json={"target_ids": ["bar"], "value": 200, "zones": ["spot1"]}).json()
+    assert r["also_strobed"] == {"bar": ["spot2"]}
+    assert client.post("/api/control/strobe", json={"target_ids": ["bar"], "value": 0}).json()["also_strobed"] == {}
 
 
-def test_a_profile_without_mirrors_is_unaffected(engine):
-    engine.set_strobe("par", 200)                                 # a plain PAR: nothing extra is written
-    assert engine.dmx.get_channel(dmx(11)) == 0
-
-
-def test_the_spot_strobe_control_works_on_its_own_and_follows_the_master_strobe(engine):
-    engine.set_custom("bar", "Spot Strobe", 130)
-    assert engine.dmx.get_channel(dmx(2)) == 130 and engine.dmx.get_channel(dmx(11)) == 0   # derbies untouched
-    engine.set_strobe("bar", 255)
-    assert engine.state_for("bar").values["custom_2"] == 255       # the Spot Strobe control follows
+def test_a_saved_profile_with_keys_this_version_dropped_still_loads():
+    """A user copy of a profile written by an older layout (role_mirrors, an unknown zone key...)."""
+    old = FixtureLibrary().get(KLS).to_dict()
+    old["role_mirrors"] = {"strobe": [11]}
+    old["zones"][0]["something_old"] = 1
+    old["custom_channels"][0]["ranges"][0]["speed_old"] = True
+    again = FixtureProfile.from_dict(old)
+    assert again.id == KLS and again.zones[0].id == "derby1"

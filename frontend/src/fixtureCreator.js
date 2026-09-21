@@ -75,7 +75,13 @@ function onExistingProfileChange() {
 
 // ---- zones -------------------------------------------------------------------------------------------------
 
-const ZONE_ROLES = ["red", "green", "blue", "white", "dimmer"];
+// The functions a zone can own a channel for. To let zones map another function, add it here (and to
+// ZONE_ROLES in backend/app/fixtures/schema.py) and give the Zones window a control for it.
+const ZONE_ROLE_FIELDS = [
+  { role: "red", short: "R" }, { role: "green", short: "G" }, { role: "blue", short: "B" },
+  { role: "white", short: "W" }, { role: "dimmer", short: "Dim", title: "the zone's own dimmer channel" },
+  { role: "strobe", short: "Strobe", title: "the zone's strobe channel (may be shared with other zones)" },
+];
 
 function addZoneRow(existing) {
   const container = document.getElementById("fc-zone-list");
@@ -87,8 +93,10 @@ function addZoneRow(existing) {
     <input type="text" class="zone-label" placeholder="Label (Spot 1)">
     <input type="text" class="zone-kind" list="fc-zone-kinds" placeholder="kind">
     <input type="number" class="zone-position" step="0.05" min="-1" max="1" placeholder="pos">
-    ${ZONE_ROLES.map((r) => `<input type="number" min="1" class="zone-ch" data-role="${r}" placeholder="${r[0].toUpperCase()}" title="${r} channel">`).join("")}
     <button type="button" class="zone-remove">x</button>
+    <div class="zone-chs">
+      ${ZONE_ROLE_FIELDS.map((f) => `<div class="zone-ch-wrap" title="${f.title || f.role + " channel"}"><span>${f.short}</span><input type="number" min="1" class="zone-ch" data-role="${f.role}"></div>`).join("")}
+    </div>
   `;
   if (existing) {
     row.querySelector(".zone-label").value = existing.label;

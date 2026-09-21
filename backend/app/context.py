@@ -47,8 +47,11 @@ class AppContext:
         self.dmx = self._build_initial_dmx_output()
 
         self.engine = ShowEngine(room, self.library, self.dmx)
-        for group in self.storage.load_groups():
-            self.engine.add_group(group)
+        stored_groups = self.storage.load_groups()
+        stored_dicts = [g.to_dict() for g in stored_groups]
+        self.engine.set_groups(stored_groups)
+        if stored_dicts != [g.to_dict() for g in self.engine.groups.values()]:
+            self.persist_groups()   # the built-in "All lights" group was missing (or missing lights)
         self.animations: dict[str, Animation] = {
             a.id: a for a in self.storage.load_animations()
         }
@@ -174,6 +177,7 @@ class AppContext:
 
     def persist_room(self) -> None:
         self.storage.save_room(self.engine.room)
+        self.persist_groups()   # patching a fixture also updates the "All lights" group
 
     def persist_groups(self) -> None:
         self.storage.save_groups(list(self.engine.groups.values()))
@@ -231,8 +235,7 @@ class AppContext:
             self.stop_pattern(pattern_id)
 
         self.engine.load_room(room)
-        self.engine.groups = {group.id: group for group in
-                               (Group.from_dict(g) for g in data.get("groups", []))}
+        self.engine.set_groups(Group.from_dict(g) for g in data.get("groups", []))
         self.animations = {a.id: a for a in
                             (Animation.from_dict(x) for x in data.get("animations", []))}
         self.patterns = {p.id: p for p in

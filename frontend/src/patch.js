@@ -3,29 +3,71 @@ import { state, notifyStateChange } from "./state.js";
 import { reloadRoomAndGroups } from "./main_data.js";
 import { wireMountSelect } from "./mounting.js";
 
-export function initPatchModal() {
-  wireMountSelect("patch-mount", "patch-pitch");
-  document.getElementById("btn-patch").onclick = () => openModal();
-  document.querySelector("#modal-patch .modal-close").onclick = () => closeModal();
+// The Patch window: adds a fixture, or edits an existing one. It opens from the Patch button, or
+// from the + / edit buttons in the left menu's Fixtures section.
 
+const el = (id) => document.getElementById(id);
+let editing = null; // the fixture being edited, or null when adding
+let syncMount = () => {};
+
+export function initPatchModal() {
+  syncMount = wireMountSelect("patch-mount", "patch-pitch");
+  el("btn-patch").onclick = () => openPatchModal();
+  document.querySelector("#modal-patch .modal-close").onclick = closeModal;
   refreshProfileSelect();
-  document.getElementById("patch-submit").onclick = submitPatch;
-  document.getElementById("group-create-btn").onclick = submitGroup;
+  el("patch-submit").onclick = submitPatch;
 }
 
-function openModal() {
+// fixture: an existing fixture to edit, or nothing to patch a new one
+export function openPatchModal(fixture) {
+  editing = fixture || null;
   refreshProfileSelect();
-  renderPatchList();
-  renderGroupFixturePicker();
-  document.getElementById("modal-patch").classList.remove("hidden");
+  el("patch-title").textContent = editing ? "Edit Fixture" : "Patch Fixture";
+  el("patch-submit").textContent = editing ? "Save Fixture" : "Add Fixture";
+  if (editing) {
+    el("patch-name").value = editing.name;
+    el("patch-profile").value = editing.profile_id;
+    el("patch-universe").value = editing.universe;
+    el("patch-address").value = editing.start_address;
+    el("patch-x").value = editing.position.x;
+    el("patch-y").value = editing.position.y;
+    el("patch-z").value = editing.position.z;
+    el("patch-yaw").value = editing.orientation.yaw_deg;
+    el("patch-pitch").value = editing.orientation.pitch_deg;
+    el("patch-invert-pan").checked = editing.inverted_pan;
+    el("patch-invert-tilt").checked = editing.inverted_tilt;
+  } else {
+    el("patch-name").value = "";
+    el("patch-universe").value = 1;
+    el("patch-address").value = nextFreeAddress();
+    for (const id of ["patch-x", "patch-y", "patch-z", "patch-yaw"]) el(id).value = 0;
+    el("patch-pitch").value = 180;
+    el("patch-invert-pan").checked = false;
+    el("patch-invert-tilt").checked = false;
+  }
+  syncMount();
+  el("modal-patch").classList.remove("hidden");
+  el("patch-name").focus();
 }
 
 function closeModal() {
-  document.getElementById("modal-patch").classList.add("hidden");
+  el("modal-patch").classList.add("hidden");
+}
+
+// First DMX address after the last patched fixture's channels (universe 1), as a starting suggestion
+function nextFreeAddress() {
+  let next = 1;
+  for (const fixture of state.room.fixtures) {
+    if (fixture.universe !== 1) continue;
+    const profile = state.profileById(fixture.profile_id);
+    next = Math.max(next, fixture.start_address + (profile ? profile.channel_count : 1));
+  }
+  return next <= 512 ? next : 1;
 }
 
 function refreshProfileSelect() {
-  const select = document.getElementById("patch-profile");
+  const select = el("patch-profile");
+  const previous = select.value;
   select.innerHTML = "";
   for (const profile of state.profiles) {
     const opt = document.createElement("option");
@@ -33,100 +75,54 @@ function refreshProfileSelect() {
     opt.textContent = `${profile.name} (${profile.channel_count}ch)`;
     select.appendChild(opt);
   }
+  if ([...select.options].some((o) => o.value === previous)) select.value = previous;
 }
 
 async function submitPatch() {
   const payload = {
-    name: document.getElementById("patch-name").value || "New Fixture",
-    profile_id: document.getElementById("patch-profile").value,
-    universe: Number(document.getElementById("patch-universe").value),
-    start_address: Number(document.getElementById("patch-address").value),
-    position: {
-      x: Number(document.getElementById("patch-x").value),
-      y: Number(document.getElementById("patch-y").value),
-      z: Number(document.getElementById("patch-z").value),
-    },
+    name: el("patch-name").value || "New Fixture",
+    profile_id: el("patch-profile").value,
+    universe: Number(el("patch-universe").value),
+    start_address: Number(el("patch-address").value),
+    position: { x: Number(el("patch-x").value), y: Number(el("patch-y").value), z: Number(el("patch-z").value) },
     orientation: {
-      yaw_deg: Number(document.getElementById("patch-yaw").value),
-      pitch_deg: Number(document.getElementById("patch-pitch").value),
-      roll_deg: 0,
+      yaw_deg: Number(el("patch-yaw").value),
+      pitch_deg: Number(el("patch-pitch").value),
+      roll_deg: editing ? editing.orientation.roll_deg || 0 : 0,
     },
-    inverted_pan: document.getElementById("patch-invert-pan").checked,
-    inverted_tilt: document.getElementById("patch-invert-tilt").checked,
+    inverted_pan: el("patch-invert-pan").checked,
+    inverted_tilt: el("patch-invert-tilt").checked,
   };
   if (!payload.profile_id) {
     alert("No fixture profiles available -- create one first.");
     return;
   }
-  await api.addFixture(payload);
+  try {
+    if (editing) {
+      // this window doesn't show the calibration trim or the fixture's own group list: keep them
+      await api.updateFixture(editing.id, {
+        ...payload,
+        pan_offset_deg: editing.pan_offset_deg || 0,
+        tilt_offset_deg: editing.tilt_offset_deg || 0,
+        group_ids: editing.group_ids || [],
+      });
+    } else {
+      await api.addFixture(payload);
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Could not save the fixture.");
+    return;
+  }
+  closeModal();
   await reloadRoomAndGroups();
-  renderPatchList();
-  renderGroupFixturePicker();
+  notifyStateChange();
 }
 
-function renderPatchList() {
-  const container = document.getElementById("patch-list");
-  container.innerHTML = "";
-  for (const fixture of state.room.fixtures) {
-    const row = document.createElement("div");
-    row.className = "patch-row";
-    const profile = state.profileById(fixture.profile_id);
-    const span = document.createElement("span");
-    span.textContent = `${fixture.name} — ${profile ? profile.name : fixture.profile_id} @${fixture.start_address}`;
-    row.appendChild(span);
-    const del = document.createElement("button");
-    del.textContent = "Delete";
-    del.onclick = async () => {
-      await api.deleteFixture(fixture.id);
-      await reloadRoomAndGroups();
-      renderPatchList();
-      renderGroupFixturePicker();
-    };
-    row.appendChild(del);
-    container.appendChild(row);
-  }
-}
-
-function renderGroupFixturePicker() {
-  const container = document.getElementById("group-fixture-picker");
-  container.innerHTML = "";
-  for (const fixture of state.room.fixtures) {
-    const label = document.createElement("label");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.value = fixture.id;
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(" " + fixture.name));
-    container.appendChild(label);
-  }
-
-  const groupList = document.createElement("div");
-  groupList.style.marginTop = "10px";
-  for (const group of state.groups) {
-    const row = document.createElement("div");
-    row.className = "group-row";
-    row.innerHTML = `<span>${group.name} (${group.fixture_ids.length})</span>`;
-    const del = document.createElement("button");
-    del.textContent = "Delete";
-    del.onclick = async () => {
-      await api.deleteGroup(group.id);
-      await reloadRoomAndGroups();
-      renderGroupFixturePicker();
-    };
-    row.appendChild(del);
-    groupList.appendChild(row);
-  }
-  container.appendChild(groupList);
-}
-
-async function submitGroup() {
-  const name = document.getElementById("group-name-input").value;
-  if (!name) return;
-  const checked = [...document.querySelectorAll("#group-fixture-picker input[type=checkbox]:checked")];
-  const fixtureIds = checked.map((cb) => cb.value);
-  await api.createGroup({ name, fixture_ids: fixtureIds });
+export async function deleteFixtureWithConfirm(fixture) {
+  if (!confirm(`Delete fixture "${fixture.name}"?`)) return;
+  await api.deleteFixture(fixture.id);
+  state.selection.delete(fixture.id);
   await reloadRoomAndGroups();
-  document.getElementById("group-name-input").value = "";
-  renderGroupFixturePicker();
   notifyStateChange();
 }

@@ -33,8 +33,45 @@ export function initZonesPanel() {
     // an explicit zone list is what makes the engine dim zones instead of the master dimmer
     api.setDimmer(ids, Math.round((pct * 255) / 100), chosenOrAllZoneIds()).catch(console.error);
   });
+  const strobe = (pct) => {
+    el("zones-strobe-pct").textContent = `${pct}%`;
+    el("zones-strobe").value = pct;
+    const ids = state.expandedFixtureIds();
+    if (ids.length === 0) return;
+    // explicit zones: the engine strobes just those (fixtures that can't do that are named in the warning)
+    api.setStrobe(ids, Math.round((pct * 255) / 100), chosenOrAllZoneIds()).catch(console.error);
+  };
+  el("zones-strobe").addEventListener("input", () => strobe(Number(el("zones-strobe").value)));
+  document.querySelectorAll("#zones-strobe-presets [data-zstrobe]").forEach((btn) => {
+    btn.onclick = () => strobe(Number(btn.dataset.zstrobe));
+  });
   onStateChange(render);
   render();
+}
+
+// What the strobe control cannot do for the chosen zones, from the selected fixtures' profiles:
+// zones sharing one strobe channel strobe together (a bar's two spots), and a zone may have no
+// strobe at all. Returns a list of sentences for the warning under the slider.
+function strobeWarnings() {
+  const chosen = new Set(chosenOrAllZoneIds());
+  const notes = [];
+  for (const fid of state.expandedFixtureIds()) {
+    const fixture = state.fixtureById(fid);
+    const zones = (fixture && state.profileById(fixture.profile_id)?.zones) || [];
+    if (zones.length === 0 || !zones.some((z) => z.channels && z.channels.strobe)) continue;
+    const mine = zones.filter((z) => chosen.has(z.id));
+    const channels = new Set(mine.map((z) => z.channels.strobe).filter(Boolean));
+    const dragged = zones.filter((z) => !chosen.has(z.id) && channels.has(z.channels.strobe));
+    const none = mine.filter((z) => !z.channels.strobe);
+    const names = (list) => list.map((z) => z.label).join(", ");
+    if (dragged.length) {
+      const asked = mine.filter((z) => channels.has(z.channels.strobe));
+      notes.push(`${fixture.name}: ${names(asked)} and ${names(dragged)} share one strobe channel, `
+        + "so they can only strobe together.");
+    }
+    if (none.length) notes.push(`${fixture.name}: ${names(none)} can't strobe.`);
+  }
+  return notes;
 }
 
 function selectionZones() {
@@ -90,6 +127,7 @@ function render() {
   }
   updateSwatches();
   syncBrightness();
+  syncStrobe();
 }
 
 function buildIdentify(zones) {
@@ -170,6 +208,26 @@ function syncBrightness() {
       const pct = Math.round((first.dimmer * 100) / 255);
       slider.value = pct;
       el("zones-dim-pct").textContent = `${pct}%`;
+      return;
+    }
+  }
+}
+
+function syncStrobe() {
+  const warn = el("zones-strobe-warning");
+  const notes = strobeWarnings();
+  warn.textContent = notes.join(" ");
+  warn.classList.toggle("hidden", notes.length === 0);
+  const slider = el("zones-strobe");
+  if (document.activeElement === slider) return;
+  const wanted = chosenOrAllZoneIds();
+  for (const fid of state.expandedFixtureIds()) {
+    const st = state.fixtureState[fid]?.zones;
+    const first = st && wanted.map((id) => st[id]).find(Boolean);
+    if (first) {
+      const pct = Math.round(((first.strobe || 0) * 100) / 255);
+      slider.value = pct;
+      el("zones-strobe-pct").textContent = `${pct}%`;
       return;
     }
   }

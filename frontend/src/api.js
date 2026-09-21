@@ -59,7 +59,10 @@ export const api = {
   // zones given = brightness of just those zones (fixtures that declare zones); omitted = master dimmer
   setDimmer: (targetIds, value, zones) =>
     req("POST", "/control/dimmer", { target_ids: targetIds, value, zones: zones && zones.length ? zones : null }),
-  setStrobe: (targetIds, value) => req("POST", "/control/strobe", { target_ids: targetIds, value }),
+  // zones: strobe only these zones (fixtures whose zones have strobe channels); resolves to
+  // { also_strobed: { fixtureId: [zone ids that share a strobe channel with a chosen one] } }
+  setStrobe: (targetIds, value, zones) =>
+    req("POST", "/control/strobe", { target_ids: targetIds, value, zones: zones && zones.length ? zones : null }),
   setShutter: (targetIds, closed) => req("POST", "/control/shutter", { target_ids: targetIds, closed }),
   setPanTilt: (targetId, pan, tilt, panFine = 0, tiltFine = 0) =>
     req("POST", "/control/pan-tilt", { target_id: targetId, pan, tilt, pan_fine: panFine, tilt_fine: tiltFine }),

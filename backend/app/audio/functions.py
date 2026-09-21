@@ -254,7 +254,7 @@ class BeatStrobe(_Runtime):
             if not self.active:
                 self.active = True
                 speed = _logical(float(_p(fn, "speed_pct", 80)))
-                ctx.engine.set_strobe(fn.targets, speed)
+                ctx.engine.set_strobe(fn.targets, speed, zones=_zones(fn))
         elif self.active:
             self.active = False
             ctx.engine.set_shutter(fn.targets, False)   # open: light on, no strobe
@@ -328,7 +328,7 @@ FUNCTION_TYPES: dict[str, dict] = {
         "params": [num("gain", "Gain", 1.0, 0.2, 4, 0.1), num("smooth_ms", "Smooth", 120, 10, 1000, 10, "ms")],
     },
     "beat_strobe": {
-        "label": "Beat strobe", "runtime": BeatStrobe, "category": "color",
+        "label": "Beat strobe", "runtime": BeatStrobe, "category": "color", "uses_zones": True,
         "description": "A short strobe burst on the beat, then back to open.",
         "params": [choice("every", "Every", 4, [1, 2, 4, 8]), num("burst_ms", "Burst", 250, 50, 2000, 10, "ms"),
                    num("speed_pct", "Speed", 80, 1, 100, 1, "%")],

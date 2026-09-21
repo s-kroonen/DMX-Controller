@@ -41,7 +41,9 @@ KNOWN_FUNCTIONS = (
 )
 
 # Roles a zone can own (a subset of the above).
-ZONE_ROLES = ("red", "green", "blue", "white", "amber", "uv", "dimmer")
+# A zone's channels may be shared with other zones (two spots on one strobe channel): the
+# fixture simply cannot drive them independently, and the UI warns about it.
+ZONE_ROLES = ("red", "green", "blue", "white", "amber", "uv", "dimmer", "strobe")
 MAIN_ZONE_ID = "main"
 
 
@@ -127,12 +129,6 @@ class FixtureProfile:
     role_ranges: dict[str, RoleRange] = dataclasses.field(default_factory=dict)
     # independently colored sections; empty = the fixture is one implicit "main" zone
     zones: list[Zone] = dataclasses.field(default_factory=list)
-    # role -> extra channel offsets that receive the same value as the role's own channel.
-    # For a fixture whose "strobe" channel only strobes some of its lights (a light bar whose
-    # master strobe covers the spots while the derbies have their own strobe channel), so ONE
-    # strobe control still strobes everything: {"strobe": [11]}. The extra channel gets the
-    # same logical -> raw mapping (role_ranges) as the role.
-    role_mirrors: dict[str, list[int]] = dataclasses.field(default_factory=dict)
 
     def has_function(self, name: str) -> bool:
         return name in self.channels
@@ -149,7 +145,19 @@ class FixtureProfile:
         return any(all(c in z.channels for c in ("red", "green", "blue")) for z in self.zones)
 
     def has_strobe(self) -> bool:
-        return self.has_function("strobe") or self.has_function("shutter")
+        return self.has_function("strobe") or self.has_function("shutter") or self.has_zone_strobe()
+
+    def has_zone_strobe(self) -> bool:
+        """True if any zone has its own strobe channel (a light bar's spots and derbies)."""
+        return any("strobe" in z.channels for z in self.zones)
+
+    def zone_strobe_sharing(self, zone_ids) -> list[str]:
+        """Zones that are NOT in `zone_ids` but strobe together with one of them because they
+        share its strobe channel (empty when every selected zone strobes independently)."""
+        chosen = set(zone_ids)
+        channels = {z.channels["strobe"] for z in self.zones if z.id in chosen and "strobe" in z.channels}
+        return [z.id for z in self.zones
+                if z.id not in chosen and z.channels.get("strobe") in channels]
 
     # -- zones ---------------------------------------------------------
 
@@ -186,11 +194,19 @@ class FixtureProfile:
 
     @staticmethod
     def from_dict(d: dict) -> "FixtureProfile":
+        # Saved profiles outlive the code: keys this version no longer has (an older layout's
+        # `role_mirrors`, say) are dropped instead of making the whole library fail to load.
         custom = []
         for c in d.get("custom_channels", []):
-            ranges = [ChannelRange(**r) for r in (c.get("ranges") or [])]
-            custom.append(CustomChannel(**{**c, "ranges": ranges}))
-        ranges = {role: RoleRange(**r) for role, r in (d.get("role_ranges") or {}).items()}
-        zones = [Zone(**z) for z in (d.get("zones") or [])]
-        kwargs = {**d, "custom_channels": custom, "role_ranges": ranges, "zones": zones}
+            ranges = [ChannelRange(**_known(ChannelRange, r)) for r in (c.get("ranges") or [])]
+            custom.append(CustomChannel(**{**_known(CustomChannel, c), "ranges": ranges}))
+        ranges = {role: RoleRange(**_known(RoleRange, r)) for role, r in (d.get("role_ranges") or {}).items()}
+        zones = [Zone(**_known(Zone, z)) for z in (d.get("zones") or [])]
+        kwargs = {**_known(FixtureProfile, d), "custom_channels": custom, "role_ranges": ranges, "zones": zones}
         return FixtureProfile(**kwargs)
+
+
+def _known(cls, data: dict) -> dict:
+    """`data` without the keys `cls` has no field for."""
+    fields = {f.name for f in dataclasses.fields(cls)}
+    return {k: v for k, v in data.items() if k in fields}

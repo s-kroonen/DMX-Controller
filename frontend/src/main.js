@@ -1,6 +1,7 @@
 import { api, connectWebSocket } from "./api.js";
 import { state, onStateChange, notifyStateChange } from "./state.js";
-import { renderSidebar } from "./sidebar.js";
+import { renderSidebar, initSidebar } from "./sidebar.js";
+import { initGroupModal } from "./groupModal.js";
 import { initPanels } from "./panels.js";
 import { initPatchModal } from "./patch.js";
 import { initFixtureCreator } from "./fixtureCreator.js";
@@ -65,6 +66,8 @@ async function bootstrap() {
   initZonesPanel();
   initWindowsMenu();
   initPatchModal();
+  initGroupModal();
+  initSidebar();
   initFixtureDetailsPanel();
   initFixtureCreator();
   initRoomShapeModal();
