@@ -561,3 +561,52 @@ def test_a_saved_profile_with_keys_this_version_dropped_still_loads():
     old["custom_channels"][0]["ranges"][0]["speed_old"] = True
     again = FixtureProfile.from_dict(old)
     assert again.id == KLS and again.zones[0].id == "derby1"
+
+
+# ---- the zone choice on effects ---------------------------------------------------------------------
+
+def test_the_zone_chase_is_named_after_what_it_listens_to():
+    from app.audio.functions import function_types_for_ui
+
+    labels = {t["type"]: t["label"] for t in function_types_for_ui()}
+    assert labels["zone_chase"] == "Beat zone chase"
+
+
+def test_every_color_effect_offers_a_zone_choice():
+    from app.audio.functions import function_types_for_ui
+
+    types = {t["type"]: t for t in function_types_for_ui()}
+    assert all(t["uses_zones"] for t in types.values() if t["category"] == "color")
+    assert not types["beat_movement"]["uses_zones"]           # aiming has nothing to do with zones
+
+
+def test_two_effects_share_one_bar_on_different_zones(service, engine):
+    service.add_function("zone_chase", ["bar"], {"palette": ["#ff0000"], "every": 1}, zones=["spot1", "spot2"])
+    service.add_function("beat_color", ["bar"], {"palette": ["#0000ff"], "every": 1}, zones=["derby1", "derby2"])
+    for _ in range(3):
+        beat(service)
+        tick(service)
+    assert vals(engine, DERBY1) == [0, 0, 255, 0] and vals(engine, DERBY2) == [0, 0, 255, 0]
+    assert sorted([vals(engine, SPOT1)[0], vals(engine, SPOT2)[0]]) == [0, 255]     # one spot lit by the chase
+    assert vals(engine, SPOT1 + SPOT2)[2::4] == [0, 0]                              # no blue on the spots
+
+
+def test_lights_without_zones_are_still_driven_when_zones_are_picked(service, engine):
+    """A regular chase on a group: the zone choice narrows the bar, the plain PAR keeps going."""
+    from app.groups.model import Group
+
+    engine.add_group(Group(id="both", name="Both", fixture_ids=["bar", "par"]))
+    service.add_function("beat_color", ["both"], {"palette": ["#ff0000"], "every": 1}, zones=["derby1"])
+    beat(service)
+    tick(service)
+    assert vals(engine, DERBY1)[0] == 255 and vals(engine, SPOT1 + SPOT2 + DERBY2) == [0] * 12
+    assert engine.dmx.get_channel(20) == 255                 # the PAR's red
+
+
+def test_a_dimmer_effect_with_zones_still_drives_a_plain_light(service, engine):
+    engine.set_color("par", 200, 0, 0)
+    service.add_function("vu_dimmer", ["bar", "par"], {"attack_ms": 0, "release_ms": 0}, zones=["spot1"])
+    service.analyzer.f.level = 0.0
+    tick(service)
+    assert vals(engine, SPOT1) == [0, 0, 0, 0]               # the bar's chosen zone follows the level
+    assert engine.dmx.get_channel(20) == 0                   # so does the PAR, whose master dimmer is its brightness

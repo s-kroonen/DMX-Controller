@@ -48,8 +48,9 @@ class SoundFunction:
     targets: list[str] = dataclasses.field(default_factory=list)
     enabled: bool = True
     params: dict = dataclasses.field(default_factory=dict)
-    # limit to these zones of the target fixtures (a light bar's "spot1", "derby2", ...);
-    # empty = every zone. Only functions with `uses_zones` look at it.
+    # limit to these zones of the target fixtures that have zones (a light bar's "spot1",
+    # "derby2", ...); empty = every zone. Lights without zones are driven as normal whatever is
+    # chosen. Only functions with `uses_zones` look at it.
     zones: list[str] = dataclasses.field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -106,6 +107,23 @@ def _zones(fn: SoundFunction) -> Optional[list[str]]:
     return list(fn.zones) or None
 
 
+def _apply(fn: SoundFunction, ctx: "StepContext", send: Callable[[list[str], Optional[list[str]]], None]) -> None:
+    """Run `send(fixture_ids, zones)` for the function's lights. The zone choice narrows the lights
+    that have zones; a light without zones (a moving head next to a light bar in one group) has
+    nothing to narrow and is driven as normal, so it is not silently dropped from the effect."""
+    zones = _zones(fn)
+    if zones is None:
+        send(list(fn.targets), None)
+        return
+    zoned, plain = [], []
+    for fid in ctx.engine.resolve_fixture_ids(fn.targets):
+        (zoned if ctx.engine.profile_for(fid).zones else plain).append(fid)
+    if zoned:
+        send(zoned, zones)
+    if plain:
+        send(plain, None)
+
+
 class VuDimmer(_Runtime):
     """Dimmer follows the loudness (or one band): a VU meter for the lights."""
 
@@ -123,7 +141,7 @@ class VuDimmer(_Runtime):
         lo, hi = float(_p(fn, "min_pct", 0)), float(_p(fn, "max_pct", 100))
         pct = lo + (hi - lo) * self.value
         level = _logical(pct)
-        self._send(level, lambda: ctx.engine.set_dimmer(fn.targets, level, zones=_zones(fn)))
+        self._send(level, lambda: _apply(fn, ctx, lambda ids, z: ctx.engine.set_dimmer(ids, level, zones=z)))
 
 
 class BeatFlash(_Runtime):
@@ -141,7 +159,7 @@ class BeatFlash(_Runtime):
         self.pulse = max(0.0, self.pulse - ctx.dt / decay)
         lo, hi = float(_p(fn, "min_pct", 5)), float(_p(fn, "max_pct", 100))
         level = _logical(lo + (hi - lo) * self.pulse)
-        self._send(level, lambda: ctx.engine.set_dimmer(fn.targets, level, zones=_zones(fn)))
+        self._send(level, lambda: _apply(fn, ctx, lambda ids, z: ctx.engine.set_dimmer(ids, level, zones=z)))
 
 
 class BeatColor(_Runtime):
@@ -163,7 +181,8 @@ class BeatColor(_Runtime):
         if self.index < 0:
             return
         r, g, b = _hex_rgb(palette[self.index % len(palette)])
-        self._send((r, g, b, self.index), lambda: ctx.engine.set_color(fn.targets, r, g, b, zones=_zones(fn)))
+        self._send((r, g, b, self.index),
+                   lambda: _apply(fn, ctx, lambda ids, z: ctx.engine.set_color(ids, r, g, b, zones=z)))
 
 
 class ZoneChase(_Runtime):
@@ -235,7 +254,7 @@ class ColorOrgan(_Runtime):
         for i, v in enumerate((f.bass, f.mid, f.high)):
             self.smoothed[i] += (min(1.0, v * gain) - self.smoothed[i]) * k
         r, g, b = (round(255 * v) for v in self.smoothed)
-        self._send((r, g, b), lambda: ctx.engine.set_color(fn.targets, r, g, b, zones=_zones(fn)))
+        self._send((r, g, b), lambda: _apply(fn, ctx, lambda ids, z: ctx.engine.set_color(ids, r, g, b, zones=z)))
 
 
 class BeatStrobe(_Runtime):
@@ -254,7 +273,7 @@ class BeatStrobe(_Runtime):
             if not self.active:
                 self.active = True
                 speed = _logical(float(_p(fn, "speed_pct", 80)))
-                ctx.engine.set_strobe(fn.targets, speed, zones=_zones(fn))
+                _apply(fn, ctx, lambda ids, z: ctx.engine.set_strobe(ids, speed, zones=z))
         elif self.active:
             self.active = False
             ctx.engine.set_shutter(fn.targets, False)   # open: light on, no strobe
@@ -315,7 +334,7 @@ FUNCTION_TYPES: dict[str, dict] = {
                    {"key": "palette", "label": "Colors", "kind": "palette", "default": DEFAULT_PALETTE}],
     },
     "zone_chase": {
-        "label": "Zone chase", "runtime": ZoneChase, "category": "color", "uses_zones": True,
+        "label": "Beat zone chase", "runtime": ZoneChase, "category": "color", "uses_zones": True,
         "description": "Light a fixture's zones (e.g. a light bar's spots and derbies) in turn on the beat.",
         "params": [EVERY,
                    choice("pattern", "Pattern", "sequence", ["sequence", "ping_pong", "alternate", "random"]),

@@ -323,9 +323,12 @@ In the UI:
   zone. The **RGB** window then colors only those zones, and the **Zone brightness** slider dims
   only those (on a fixture with no per-zone dimmer channel this scales the zone's color). The
   master dimmer and strobe stay in the Strobe / Shutter window.
-- **Sound**: functions that honour zones (VU dimmer, Beat flash, Beat color chase, Color organ and
-  the new **Zone chase**, which walks the fixture's zones in turn: sequence, ping-pong,
-  checkerboard or random) get a zone picker on their card. The bar's own built-in Sound 1-3
+- **Sound**: every color effect (VU dimmer, Beat flash, Beat color chase, Beat strobe, Color organ and
+  **Beat zone chase**, which walks the fixture's zones in turn on the beat: sequence, ping-pong,
+  checkerboard or random) gets a zone picker on its card as soon as a selected light (or a light in a
+  selected group) has zones. Pick the zones the effect drives; nothing picked = every zone. Lights
+  without zones are driven as normal whatever is picked. Two effects can share one bar: a Beat zone
+  chase on its spots and a Beat color chase on its derbies. The bar's own built-in Sound 1-3
   programs are in the Custom Channels window.
 - **3D**: the model is picked by `fixture_type` (`buildFixtureBody` in `frontend/src/scene3d.js`;
   unknown types get a plain box). The light bar is drawn as a mounting bar on top with a head hanging

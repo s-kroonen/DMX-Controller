@@ -324,6 +324,7 @@ function functionCard(fn) {
   if (zones.length) {
     const box = document.createElement("div");
     box.className = "fn-targets fn-zones";
+    box.title = "Which zones this effect drives. Lights without zones are driven as normal.";
     const pickedZones = new Set(fn.zones || []);
     const push = () => patchLater(fn.id, { zones: [...pickedZones] });
     const zoneChip = (label, checked, onChange) => {
