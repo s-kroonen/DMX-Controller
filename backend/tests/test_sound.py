@@ -420,6 +420,7 @@ def test_api_function_crud_and_config(client):
     assert client.delete(f"/api/audio/functions/{fn['id']}").status_code == 200
     assert client.get("/api/audio/status").json()["functions"] == []
 
+    client.put("/api/mode", json={"mode": "show"})           # effects only run in show mode
     cfg = client.post("/api/audio/config", json={"gain": 2.0, "sound_enabled": True}).json()["config"]
     assert cfg["gain"] == 2.0 and cfg["sound_enabled"] is True
     assert client.post("/api/audio/config", json={"beat_source": "magic"}).status_code == 400
@@ -536,6 +537,7 @@ def test_function_types_carry_their_category():
 
 def test_api_sound_mode(client):
     assert client.get("/api/audio/status").json()["config"]["sound_mode"] == "off"
+    client.put("/api/mode", json={"mode": "show"})
     cfg = client.post("/api/audio/config", json={"sound_mode": "color"}).json()["config"]
     assert cfg["sound_mode"] == "color" and cfg["sound_enabled"] is True
     assert client.post("/api/audio/config", json={"sound_mode": "nope"}).status_code == 400

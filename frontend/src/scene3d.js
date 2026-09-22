@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
+import { makeCalibrationMarker, updateCalibrationMarker } from "./calMarker.js";
 import { api } from "./api.js";
 import { state, onStateChange, notifyStateChange } from "./state.js";
 import { loadPref, savePref } from "./uiPrefs.js";
@@ -24,6 +25,9 @@ let objectMeshes = new Map(); // room object id -> {group, kind}
 let zoneMeshes = new Map();
 let aimSurfaces = []; // meshes the click-to-aim raycaster can hit (floor/walls/ceiling)
 let gizmoAttachedFixtureId = null;
+let gizmoWasAllowed = true;
+let calMarker = null;
+let pickCallback = null; // set while the Calibrate window waits for a click on a surface
 let selectedObjectId = null; // a room object selected by clicking it in 3D (non-wall only)
 let suppressNextClick = false;
 let gizmoMode = "translate"; // "translate" | "yaw" | "pitch" -- yaw/pitch only apply to fixtures
@@ -67,6 +71,8 @@ export function initScene3D(container) {
   roomRoot = new THREE.Group();
   roomRoot.rotation.x = -Math.PI / 2; // room-space Z-up -> Three Y-up
   scene.add(roomRoot);
+  calMarker = makeCalibrationMarker();
+  roomRoot.add(calMarker);
 
   staticGroup = new THREE.Group();
   roomRoot.add(staticGroup);
@@ -157,9 +163,11 @@ export function getGizmoMode() {
 }
 
 function reattachGizmoForMode() {
-  const entry = gizmoAttachedFixtureId ? fixtureMeshes.get(gizmoAttachedFixtureId) : null;
+  const entry = gizmoAttachedFixtureId && state.mode === "edit" ? fixtureMeshes.get(gizmoAttachedFixtureId) : null;
   let wantedObj = null;
-  if (entry && gizmoMode === "pitch") {
+  if (state.mode !== "edit") {
+    wantedObj = null; // show mode: nothing can be dragged by accident
+  } else if (entry && gizmoMode === "pitch") {
     wantedObj = entry.pitchGroup;
   } else if (entry && gizmoMode === "roll") {
     wantedObj = entry.rollGroup;
@@ -303,7 +311,10 @@ function updateGizmoAttachment() {
 
   if (selection.length > 0) selectedObjectId = null; // any sidebar selection wins
 
-  const attachmentChanged = gizmoAttachedFixtureId !== singleFixtureId;
+  // the drag gizmo (moving fixtures and objects) only exists in edit mode
+  const gizmoAllowed = state.mode === "edit";
+  const attachmentChanged = gizmoAttachedFixtureId !== singleFixtureId || gizmoAllowed !== gizmoWasAllowed;
+  gizmoWasAllowed = gizmoAllowed;
   gizmoAttachedFixtureId = singleFixtureId;
 
   // Room objects have no orientation field -- yaw/pitch never apply to
@@ -325,7 +336,14 @@ function clearGroup(group) {
   while (group.children.length) group.remove(group.children[0]);
 }
 
+// The next click on a floor/wall/ceiling surface goes to `callback` (room-space point) instead of
+// selecting or aiming; used by the Calibrate window's "Pick in 3D".
+export function startPickPoint(callback) {
+  pickCallback = callback;
+}
+
 function rebuildScene() {
+  updateCalibrationMarker(calMarker, state.calibrationPoint, state.mode === "edit");
   const staticKey = JSON.stringify({ floor: state.room.floor_points, dims: state.room.dimensions });
   if (staticKey !== lastStaticKey) {
     lastStaticKey = staticKey;
@@ -658,8 +676,77 @@ function updateFixtures() {
 
     const beamBlocked = fixtureState && fixtureState.blocked_by_safety_zone;
     entry.beam.material.color.set(beamBlocked ? 0xff0000 : color);
+
+    // A light bar has nothing to aim, so no beam line; instead each of its zones (spots,
+    // derbies) glows with that zone's live color, scaled by the zone and master brightness.
+    entry.beam.visible = !entry.isLightBar;
+    if (entry.zoneMaterials) updateZoneGlow(entry, fixtureState);
   }
 }
+
+export function updateZoneGlow(entry, fixtureState) {
+  const values = (fixtureState && fixtureState.values) || {};
+  const zones = (fixtureState && fixtureState.zones) || {};
+  const master = fixtureState && fixtureState.shutter_closed ? 0 : (values.dimmer ?? 255) / 255;
+  for (const [zoneId, mat] of Object.entries(entry.zoneMaterials)) {
+    const z = zones[zoneId];
+    const [r, g, b, w] = z ? z.color : [0, 0, 0, 0];
+    const k = master * (z ? z.dimmer / 255 : 1);
+    const level = (c) => Math.min(1, ((c + w) / 255) * k);
+    mat.emissive.setRGB(level(r), level(g), level(b));
+    mat.color.setRGB(0.12 + 0.88 * level(r), 0.12 + 0.88 * level(g), 0.12 + 0.88 * level(b));
+  }
+}
+
+// Heads for the zones of a light bar / lamp bar, keyed by zone `kind`. Each is built facing
+// local +Y (front) and centred on the origin, takes the housing material and the zone's glow
+// material, and returns a Group. To support another kind of light on a bar (say PAR spots),
+// add an entry here -- profiles just say `"kind": "par"`. Unknown kinds fall back to a spot.
+const LIGHT_HEAD_MODELS = {
+  // a compact spot: a short can with a flat lens
+  spot(material, glow) {
+    const g = new THREE.Group();
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.058, 0.11, 24), material);
+    g.add(can);                                    // cylinder axis is Y: front is +Y
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.044, 24), glow);
+    lens.position.y = 0.056;
+    lens.rotation.x = -Math.PI / 2;                // a circle faces +Z by default; face +Y
+    g.add(lens);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.03, 16), material);
+    cap.position.y = -0.07;
+    g.add(cap);
+    return g;
+  },
+  // a derby: a low round base with a big domed lens on the front
+  derby(material, glow) {
+    const g = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.064, 0.064, 0.04, 28), material);
+    base.position.y = -0.03;
+    g.add(base);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.062, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), glow);
+    dome.position.y = -0.01;
+    g.add(dome);                                   // hemisphere with its pole toward +Y
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.064, 0.006, 8, 28), material);
+    ring.position.y = -0.01;
+    ring.rotation.x = Math.PI / 2;
+    g.add(ring);
+    return g;
+  },
+  // a PAR spot: a fat can with a wide lens and a rear cap
+  par(material, glow) {
+    const g = new THREE.Group();
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.076, 0.13, 28), material);
+    g.add(can);
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(0.062, 28), glow);
+    lens.position.y = 0.066;
+    lens.rotation.x = -Math.PI / 2;
+    g.add(lens);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.04, 16), material);
+    cap.position.y = -0.085;
+    g.add(cap);
+    return g;
+  },
+};
 
 // Bodies are authored in the fixture's own frame and mounted by updateFixtures():
 // the outer group carries position + yaw, `pitchGroup` places the fixture's HOME
@@ -671,7 +758,7 @@ function updateFixtures() {
 //   * everything else (PAR, laser, generic...): the aim/front is local +Y.
 // A bright green arrow marks the front regardless of body shape, since a small
 // shape asymmetry can be hard to read across a room.
-function buildFixtureBody(fixtureType, material) {
+function buildFixtureBody(fixtureType, material, profile) {
   const bodyGroup = new THREE.Group();
   const lensMat = new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0x554400 });
 
@@ -706,6 +793,36 @@ function buildFixtureBody(fixtureType, material) {
     lens.position.set(-0.0715, 0.10, 0);
     lens.rotation.y = -Math.PI / 2; // face -X (left)
     bodyGroup.add(lens);
+    return bodyGroup;
+  }
+
+  if (fixtureType === "light_bar") {
+    // A mounting bar with lights hung underneath it. In the fixture's frame the lights face
+    // local +Y (the aim, like a PAR) and local +Z is "up", so the bar sits on top (+Z) and each
+    // light hangs below it (-Z). One head per ZONE the profile declares, built by the model for
+    // that zone's `kind` (see LIGHT_HEAD_MODELS), placed along the bar by the zone's `position`
+    // (-1 = left .. +1 = right AS SEEN LOOKING AT THE FRONT, or spread evenly). Each head gets its own glow material so updateFixtures() can
+    // light it with that zone's live color.
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.05, 0.04), material);
+    bar.position.z = 0.07;
+    bodyGroup.add(bar);
+    const zones = (profile && profile.zones) || [];
+    const zoneMaterials = {};
+    zones.forEach((z, i) => {
+      const pos = z.position ?? (zones.length === 1 ? 0 : -1 + (2 * i) / (zones.length - 1));
+      const glow = new THREE.MeshStandardMaterial({ color: 0x202020, emissive: 0x000000 });
+      const build = LIGHT_HEAD_MODELS[z.kind] || LIGHT_HEAD_MODELS.spot;
+      const head = build(material, glow);
+      // local +X is the viewer's LEFT when facing the front (+Y), hence the minus
+      head.position.set(-pos * 0.34, 0, -0.035);
+      bodyGroup.add(head);
+      // clamp joining the head to the bar
+      const clamp = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.035, 0.05), material);
+      clamp.position.set(-pos * 0.34, 0, 0.035);
+      bodyGroup.add(clamp);
+      zoneMaterials[z.id] = glow;
+    });
+    bodyGroup.userData.zoneMaterials = zoneMaterials;
     return bodyGroup;
   }
 
@@ -773,7 +890,7 @@ export function createFixtureMesh(fixture) {
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: baseColor });
   bodyMaterial.userData.baseColor = baseColor;
 
-  const bodyGroup = buildFixtureBody(fixtureType, bodyMaterial);
+  const bodyGroup = buildFixtureBody(fixtureType, bodyMaterial, profile);
   rollGroup.add(bodyGroup);
 
   // Unmistakable front-direction indicator, independent of body shape, so
@@ -799,7 +916,11 @@ export function createFixtureMesh(fixture) {
   }));
   rollGroup.add(beam);
 
-  return { group, pitchGroup, mountGroup, rollGroup, bodyGroup, bodyMaterial, arrow, beam, isMovingHead, profileId: fixture.profile_id };
+  return {
+    group, pitchGroup, mountGroup, rollGroup, bodyGroup, bodyMaterial, arrow, beam, isMovingHead,
+    isLightBar: fixtureType === "light_bar", zoneMaterials: bodyGroup.userData.zoneMaterials || null,
+    profileId: fixture.profile_id,
+  };
 }
 
 function onSceneClick(evt, container) {
@@ -816,6 +937,18 @@ function onSceneClick(evt, container) {
   );
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(mouse, camera);
+
+  if (pickCallback) {
+    const surfaceHits = raycaster.intersectObjects(aimSurfaces, false);
+    if (surfaceHits.length > 0) {
+      const picked = surfaceHits[0].point.clone();
+      roomRoot.worldToLocal(picked);
+      const callback = pickCallback;
+      pickCallback = null;
+      callback({ x: picked.x, y: picked.y, z: picked.z });
+    }
+    return; // a pick click never also selects or aims
+  }
 
   // Clicking a fixture selects it directly in the 3D view (same as
   // clicking its sidebar button) instead of aiming, and takes priority
@@ -843,8 +976,9 @@ function onSceneClick(evt, container) {
 
   // Clicking a draggable object selects it (and gives it the gizmo)
   // instead of aiming, and takes priority over the floor/wall aim-click.
+  // Objects are only picked to be moved, which is an edit-mode thing.
   const objectMeshList = [...objectMeshes.values()].map((e) => e.group);
-  const objectHits = raycaster.intersectObjects(objectMeshList, true);
+  const objectHits = state.mode === "edit" ? raycaster.intersectObjects(objectMeshList, true) : [];
   if (objectHits.length > 0) {
     let node = objectHits[0].object;
     while (node && !node.userData.objectId) node = node.parent;
@@ -867,6 +1001,7 @@ function onSceneClick(evt, container) {
   if (state.selection.size === 0) {
     return;
   }
+  if (state.mode !== "show") return; // pointing moving heads is for the show
   for (const targetId of state.selection) {
     api.aim(targetId, point.x, point.y, point.z).catch(console.error);
   }

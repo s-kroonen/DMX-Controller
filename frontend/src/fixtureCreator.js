@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { state } from "./state.js";
 import { reloadRoomAndGroups } from "./main_data.js";
+import { flashZone } from "./zones.js";
 
 const FUNCTIONS = [
   "pan", "pan_fine", "tilt", "tilt_fine", "dimmer",
@@ -10,6 +11,7 @@ const FUNCTIONS = [
 ];
 
 let customRowCount = 0;
+let loadedProfile = null; // the profile currently in the form (null = a new one)
 
 export function initFixtureCreator() {
   document.getElementById("btn-fixture-creator").onclick = () => openModal();
@@ -30,6 +32,8 @@ export function initFixtureCreator() {
 
   document.getElementById("fc-existing-profile").onchange = onExistingProfileChange;
   document.getElementById("fc-add-custom").onclick = () => addCustomRow();
+  document.getElementById("fc-add-zone").onclick = () => addZoneRow();
+  document.getElementById("fc-zones-sort").onclick = sortZonesLeftToRight;
   document.getElementById("fc-submit").onclick = submitFixture;
   document.getElementById("fc-qxf-import").onclick = importQxf;
 }
@@ -69,6 +73,106 @@ function onExistingProfileChange() {
   if (profile) fillForm(profile);
 }
 
+// ---- zones -------------------------------------------------------------------------------------------------
+
+// The functions a zone can own a channel for. To let zones map another function, add it here (and to
+// ZONE_ROLES in backend/app/fixtures/schema.py) and give the Zones window a control for it.
+const ZONE_ROLE_FIELDS = [
+  { role: "red", short: "R" }, { role: "green", short: "G" }, { role: "blue", short: "B" },
+  { role: "white", short: "W" }, { role: "dimmer", short: "Dim", title: "the zone's own dimmer channel" },
+  { role: "strobe", short: "Strobe", title: "the zone's strobe channel (may be shared with other zones)" },
+];
+
+function addZoneRow(existing) {
+  const container = document.getElementById("fc-zone-list");
+  const row = document.createElement("div");
+  row.className = "zone-row";
+  row.dataset.zoneId = existing ? existing.id : "";
+  row.innerHTML = `
+    <button type="button" class="zone-flash" title="Flash this zone white on the fixture chosen above">&#9889;</button>
+    <input type="text" class="zone-label" placeholder="Label (Spot 1)">
+    <input type="text" class="zone-kind" list="fc-zone-kinds" placeholder="kind">
+    <input type="number" class="zone-position" step="0.05" min="-1" max="1" placeholder="pos">
+    <button type="button" class="zone-remove">x</button>
+    <div class="zone-chs">
+      ${ZONE_ROLE_FIELDS.map((f) => `<div class="zone-ch-wrap" title="${f.title || f.role + " channel"}"><span>${f.short}</span><input type="number" min="1" class="zone-ch" data-role="${f.role}"></div>`).join("")}
+    </div>
+  `;
+  if (existing) {
+    row.querySelector(".zone-label").value = existing.label;
+    row.querySelector(".zone-kind").value = existing.kind || "";
+    row.querySelector(".zone-position").value = existing.position ?? "";
+    row.querySelectorAll(".zone-ch").forEach((input) => {
+      const value = (existing.channels || {})[input.dataset.role];
+      input.value = value === undefined ? "" : value;
+    });
+  }
+  row.querySelector(".zone-remove").onclick = () => row.remove();
+  row.querySelector(".zone-flash").onclick = () => {
+    const fixtureId = document.getElementById("fc-zone-test-fixture").value;
+    if (!fixtureId) { alert("Patch a fixture with this profile first (Patch window), then pick it in \"Flash on\"."); return; }
+    if (!row.dataset.zoneId) { alert("Save the profile first so the zone exists, then flash it."); return; }
+    flashZone(fixtureId, row.dataset.zoneId).catch(console.error);
+  };
+  container.appendChild(row);
+}
+
+function slug(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function collectZones() {
+  const used = new Set();
+  const zones = [];
+  for (const row of document.querySelectorAll("#fc-zone-list .zone-row")) {
+    const label = row.querySelector(".zone-label").value.trim();
+    if (!label) continue;
+    const channels = {};
+    row.querySelectorAll(".zone-ch").forEach((input) => {
+      if (input.value) channels[input.dataset.role] = Number(input.value);
+    });
+    let id = row.dataset.zoneId || slug(label) || `zone${zones.length + 1}`;
+    for (let n = 2; used.has(id); n += 1) id = `${slug(label) || "zone"}${n}`;
+    used.add(id);
+    row.dataset.zoneId = id;
+    const pos = row.querySelector(".zone-position").value;
+    zones.push({
+      id, label, kind: row.querySelector(".zone-kind").value.trim() || "cell", channels,
+      position: pos === "" ? null : Number(pos),
+    });
+  }
+  return zones;
+}
+
+function sortZonesLeftToRight() {
+  const container = document.getElementById("fc-zone-list");
+  const rows = [...container.querySelectorAll(".zone-row")];
+  const pos = (row) => {
+    const v = row.querySelector(".zone-position").value;
+    return v === "" ? 0 : Number(v);
+  };
+  rows.sort((a, b) => pos(a) - pos(b)).forEach((row) => container.appendChild(row));
+}
+
+function refreshTestFixtureSelect() {
+  const select = document.getElementById("fc-zone-test-fixture");
+  const profileId = document.getElementById("fc-existing-profile").value;
+  const previous = select.value;
+  select.innerHTML = "";
+  const fixtures = state.room.fixtures.filter((f) => f.profile_id === profileId);
+  if (fixtures.length === 0) {
+    select.innerHTML = '<option value="">(no patched fixture uses this profile)</option>';
+    return;
+  }
+  for (const f of fixtures) {
+    const opt = document.createElement("option");
+    opt.value = f.id;
+    opt.textContent = f.name;
+    select.appendChild(opt);
+  }
+  select.value = fixtures.some((f) => f.id === previous) ? previous : fixtures[0].id;
+}
+
 function clearForm() {
   document.getElementById("fc-name").value = "";
   document.getElementById("fc-manufacturer").value = "";
@@ -79,6 +183,9 @@ function clearForm() {
   document.getElementById("fc-tilt-range").value = 270;
   document.querySelectorAll("#fc-function-channels input").forEach((input) => { input.value = ""; });
   document.getElementById("fc-custom-list").innerHTML = "";
+  document.getElementById("fc-zone-list").innerHTML = "";
+  loadedProfile = null;
+  refreshTestFixtureSelect();
 }
 
 function fillForm(profile) {
@@ -99,6 +206,12 @@ function fillForm(profile) {
   for (const custom of profile.custom_channels || []) {
     addCustomRow(custom);
   }
+  document.getElementById("fc-zone-list").innerHTML = "";
+  for (const zone of profile.zones || []) {
+    addZoneRow(zone);
+  }
+  loadedProfile = profile;
+  refreshTestFixtureSelect();
 }
 
 function addCustomRow(existing) {
@@ -143,6 +256,8 @@ function collectFunctionChannels() {
 
 async function submitFixture() {
   const existingId = document.getElementById("fc-existing-profile").value || undefined;
+  const channels = collectFunctionChannels();
+  const hasPanTilt = "pan" in channels && "tilt" in channels;
   const payload = {
     id: existingId,
     name: document.getElementById("fc-name").value || "Custom Fixture",
@@ -150,16 +265,20 @@ async function submitFixture() {
     mode: document.getElementById("fc-mode").value,
     fixture_type: document.getElementById("fc-type").value,
     channel_count: Number(document.getElementById("fc-channel-count").value),
-    channels: collectFunctionChannels(),
+    channels,
     custom_channels: collectCustomChannels(),
-    pan_range_deg: Number(document.getElementById("fc-pan-range").value),
-    tilt_range_deg: Number(document.getElementById("fc-tilt-range").value),
-    defaults: {},
+    // pan/tilt ranges only mean something for a fixture that has pan AND tilt channels
+    pan_range_deg: hasPanTilt ? Number(document.getElementById("fc-pan-range").value) : null,
+    tilt_range_deg: hasPanTilt ? Number(document.getElementById("fc-tilt-range").value) : null,
+    // re-saving an existing profile must not wipe its defaults (e.g. a bar's master dimmer at full)
+    defaults: loadedProfile ? loadedProfile.defaults || {} : {},
+    zones: collectZones(),
   };
   const saved = await api.saveProfile(payload);
   await reloadRoomAndGroups();
   refreshExistingProfileSelect();
   document.getElementById("fc-existing-profile").value = saved.id;
+  onExistingProfileChange(); // reload the form from what was saved (zone ids, kept ranges)
   alert(`Saved fixture profile "${payload.name}". It's now available in Patch.`);
 }
 

@@ -1,4 +1,5 @@
 import { loadPref, savePref } from "./uiPrefs.js";
+import { onModeChange } from "./mode.js";
 
 // Chrome behavior shared by every floating control window: dragging,
 // closing, and -- the actual point of this module -- remembering
@@ -10,20 +11,30 @@ const PANELS = [
   { id: "rgb", label: "RGB / Color" },
   { id: "strobe", label: "Strobe / Shutter" },
   { id: "pantilt", label: "Pan / Tilt" },
+  { id: "zones", label: "Zones" },
   { id: "custom", label: "Custom Channels" },
-  { id: "sound", label: "Sound" },
+  { id: "sound", label: "Sound", mode: "show" },
+  { id: "calibrate", label: "Calibrate", mode: "edit", menu: false }, // has its own header button
 ];
 
-function prefKey(panelId) {
-  return `panel:${panelId}`;
+// Each mode remembers its own layout: the control windows are what you run the show with, but in
+// edit mode they are test tools and start closed.
+const currentMode = () => document.body.dataset.mode || "edit";
+
+function prefKey(panelId, mode = currentMode()) {
+  return `panel:${mode}:${panelId}`;
 }
+
+const markupDefaults = new Map(); // panel id -> {display, left, top} as written in index.html
 
 function elementFor(panelId) {
   return document.getElementById(`panel-${panelId}`);
 }
 
+// The windows the Controls / Test tools menu offers in the current mode
 export function listPanels() {
-  return PANELS;
+  const mode = currentMode();
+  return PANELS.filter((panel) => panel.menu !== false && (!panel.mode || panel.mode === mode));
 }
 
 export function isPanelOpen(panelId) {
@@ -43,6 +54,7 @@ export function closePanel(panelId) {
   if (!el) return;
   el.style.display = "none";
   savePanelPref(panelId);
+  document.dispatchEvent(new CustomEvent("panel-closed", { detail: panelId }));
 }
 
 function savePanelPref(panelId) {
@@ -55,17 +67,26 @@ function savePanelPref(panelId) {
   });
 }
 
+// Show the layout this mode last had; with none saved, show mode uses the markup's defaults and
+// edit mode starts with every window closed.
+function applyLayout(mode) {
+  for (const { id } of PANELS) {
+    const el = elementFor(id);
+    if (!el) continue;
+    const defaults = markupDefaults.get(id);
+    const saved = loadPref(prefKey(id, mode), null) || (mode === "show" ? loadPref(`panel:${id}`, null) : null);
+    el.style.left = (saved && saved.left) || defaults.left;
+    el.style.top = (saved && saved.top) || defaults.top;
+    if (saved) el.style.display = saved.open === false ? "none" : "";
+    else el.style.display = mode === "edit" ? "none" : defaults.display;
+  }
+}
+
 export function initPanelWindows() {
   for (const { id } of PANELS) {
     const el = elementFor(id);
     if (!el) continue;
-
-    const saved = loadPref(prefKey(id), null);
-    if (saved) {
-      if (saved.left) el.style.left = saved.left;
-      if (saved.top) el.style.top = saved.top;
-      el.style.display = saved.open === false ? "none" : "";
-    }
+    markupDefaults.set(id, { display: el.style.display, left: el.style.left, top: el.style.top });
 
     makeDraggable(el, () => savePanelPref(id));
 
@@ -74,6 +95,7 @@ export function initPanelWindows() {
       closeBtn.onclick = () => closePanel(id);
     }
   }
+  onModeChange(applyLayout); // runs now for the current mode, and again on every switch
 }
 
 function makeDraggable(panel, onDragEnd) {

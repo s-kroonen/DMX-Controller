@@ -21,6 +21,20 @@ html, body, #app {
 
 #app { display: flex; flex-direction: column; }
 
+/* edit / show mode (see src/mode.js): a screen only offers what works in the current mode */
+body[data-mode="show"] .edit-only { display: none !important; }
+body[data-mode="edit"] .show-only { display: none !important; }
+.mode-switch { flex: none; display: inline-flex; border: 1px solid var(--panel-border); border-radius: 6px; overflow: hidden; }
+.mode-switch button { border: none; border-radius: 0; padding: 6px 9px; background: #14161a; font-weight: bold; color: var(--text); }
+.mode-switch button.active[data-mode="edit"] { background: #b8860b; color: #fff; }
+.mode-switch button.active[data-mode="show"] { background: #2e8b57; color: #fff; }
+#toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 100;
+  background: #3a2a2a; border: 1px solid #a55; color: #fff; padding: 8px 16px; border-radius: 8px;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s; max-width: 90vw; text-align: center;
+}
+#toast.show { opacity: 1; }
+
 #topbar {
   display: flex;
   align-items: center;

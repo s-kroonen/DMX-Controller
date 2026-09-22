@@ -18,5 +18,7 @@ export async function loadInitialData() {
   const snap = await api.snapshot();
   state.fixtureState = snap.fixture_state;
   state.dmxStatus = snap.dmx_status;
+  state.mode = snap.mode || "edit";
+  state.calibration = snap.calibration || state.calibration;
   notifyStateChange();
 }

@@ -48,6 +48,10 @@ class SoundFunction:
     targets: list[str] = dataclasses.field(default_factory=list)
     enabled: bool = True
     params: dict = dataclasses.field(default_factory=dict)
+    # limit to these zones of the target fixtures that have zones (a light bar's "spot1",
+    # "derby2", ...); empty = every zone. Lights without zones are driven as normal whatever is
+    # chosen. Only functions with `uses_zones` look at it.
+    zones: list[str] = dataclasses.field(default_factory=list)
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
@@ -55,7 +59,8 @@ class SoundFunction:
     @staticmethod
     def from_dict(d: dict) -> "SoundFunction":
         return SoundFunction(id=d["id"], type=d["type"], targets=list(d.get("targets", [])),
-                             enabled=bool(d.get("enabled", True)), params=dict(d.get("params", {})))
+                             enabled=bool(d.get("enabled", True)), params=dict(d.get("params", {})),
+                             zones=list(d.get("zones", [])))
 
 
 # -- parameter schema (the UI renders forms from this) ---------------------
@@ -97,6 +102,28 @@ def _p(fn: SoundFunction, key: str, default: Any) -> Any:
     return fn.params.get(key, default)
 
 
+def _zones(fn: SoundFunction) -> Optional[list[str]]:
+    """The zone filter to hand the engine: None (every zone) when none are chosen."""
+    return list(fn.zones) or None
+
+
+def _apply(fn: SoundFunction, ctx: "StepContext", send: Callable[[list[str], Optional[list[str]]], None]) -> None:
+    """Run `send(fixture_ids, zones)` for the function's lights. The zone choice narrows the lights
+    that have zones; a light without zones (a moving head next to a light bar in one group) has
+    nothing to narrow and is driven as normal, so it is not silently dropped from the effect."""
+    zones = _zones(fn)
+    if zones is None:
+        send(list(fn.targets), None)
+        return
+    zoned, plain = [], []
+    for fid in ctx.engine.resolve_fixture_ids(fn.targets):
+        (zoned if ctx.engine.profile_for(fid).zones else plain).append(fid)
+    if zoned:
+        send(zoned, zones)
+    if plain:
+        send(plain, None)
+
+
 class VuDimmer(_Runtime):
     """Dimmer follows the loudness (or one band): a VU meter for the lights."""
 
@@ -114,7 +141,7 @@ class VuDimmer(_Runtime):
         lo, hi = float(_p(fn, "min_pct", 0)), float(_p(fn, "max_pct", 100))
         pct = lo + (hi - lo) * self.value
         level = _logical(pct)
-        self._send(level, lambda: ctx.engine.set_dimmer(fn.targets, level))
+        self._send(level, lambda: _apply(fn, ctx, lambda ids, z: ctx.engine.set_dimmer(ids, level, zones=z)))
 
 
 class BeatFlash(_Runtime):
@@ -132,7 +159,7 @@ class BeatFlash(_Runtime):
         self.pulse = max(0.0, self.pulse - ctx.dt / decay)
         lo, hi = float(_p(fn, "min_pct", 5)), float(_p(fn, "max_pct", 100))
         level = _logical(lo + (hi - lo) * self.pulse)
-        self._send(level, lambda: ctx.engine.set_dimmer(fn.targets, level))
+        self._send(level, lambda: _apply(fn, ctx, lambda ids, z: ctx.engine.set_dimmer(ids, level, zones=z)))
 
 
 class BeatColor(_Runtime):
@@ -154,7 +181,62 @@ class BeatColor(_Runtime):
         if self.index < 0:
             return
         r, g, b = _hex_rgb(palette[self.index % len(palette)])
-        self._send((r, g, b, self.index), lambda: ctx.engine.set_color(fn.targets, r, g, b))
+        self._send((r, g, b, self.index),
+                   lambda: _apply(fn, ctx, lambda ids, z: ctx.engine.set_color(ids, r, g, b, zones=z)))
+
+
+class ZoneChase(_Runtime):
+    """Light a fixture's zones in turn on the beat -- a light bar's spot 1 -> spot 2
+    -> derby 1 -> derby 2, ping-pong, a checkerboard, or random. Works on any
+    fixture that declares zones; plain fixtures are skipped."""
+
+    def __init__(self):
+        super().__init__()
+        self.step_no = -1
+        self.last_lit: Optional[int] = None
+        self.frame: Optional[tuple[set, tuple[int, int, int]]] = None
+        self.sent: dict[str, tuple] = {}
+
+    def _lit(self, pattern: str, n: int) -> set:
+        s = self.step_no
+        if pattern == "ping_pong" and n > 1:
+            cycle = 2 * n - 2
+            i = s % cycle
+            return {i if i < n else cycle - i}
+        if pattern == "alternate":
+            return {i for i in range(n) if i % 2 == s % 2}
+        if pattern == "random" and n > 1:
+            self.last_lit = random.choice([i for i in range(n) if i != self.last_lit])
+            return {self.last_lit}
+        return {s % n}
+
+    def step(self, fn, ctx):
+        zone_ids = [z["id"] for z in ctx.engine.zones_for(fn.targets)]
+        if fn.zones:
+            zone_ids = [z for z in zone_ids if z in fn.zones]
+        if not zone_ids:
+            return
+        every = max(1, int(_p(fn, "every", 1)))
+        if ctx.beats and ctx.beat_index % every == 0:
+            self.step_no += 1
+            n = len(zone_ids)
+            palette = _p(fn, "palette", DEFAULT_PALETTE) or DEFAULT_PALETTE
+            color_mode = _p(fn, "color_mode", "per_pass")
+            if color_mode == "per_step":
+                idx = self.step_no % len(palette)
+            elif color_mode == "per_pass":
+                idx = (self.step_no // n) % len(palette)
+            else:
+                idx = 0
+            self.frame = (self._lit(_p(fn, "pattern", "sequence"), n), _hex_rgb(palette[idx]))
+        if self.frame is None:
+            return
+        lit, rgb = self.frame
+        for i, zone_id in enumerate(zone_ids):
+            color = rgb if i in lit else (0, 0, 0)
+            if self.sent.get(zone_id) != color:
+                self.sent[zone_id] = color
+                ctx.engine.set_color(fn.targets, *color, zones=[zone_id])
 
 
 class ColorOrgan(_Runtime):
@@ -172,7 +254,7 @@ class ColorOrgan(_Runtime):
         for i, v in enumerate((f.bass, f.mid, f.high)):
             self.smoothed[i] += (min(1.0, v * gain) - self.smoothed[i]) * k
         r, g, b = (round(255 * v) for v in self.smoothed)
-        self._send((r, g, b), lambda: ctx.engine.set_color(fn.targets, r, g, b))
+        self._send((r, g, b), lambda: _apply(fn, ctx, lambda ids, z: ctx.engine.set_color(ids, r, g, b, zones=z)))
 
 
 class BeatStrobe(_Runtime):
@@ -191,7 +273,7 @@ class BeatStrobe(_Runtime):
             if not self.active:
                 self.active = True
                 speed = _logical(float(_p(fn, "speed_pct", 80)))
-                ctx.engine.set_strobe(fn.targets, speed)
+                _apply(fn, ctx, lambda ids, z: ctx.engine.set_strobe(ids, speed, zones=z))
         elif self.active:
             self.active = False
             ctx.engine.set_shutter(fn.targets, False)   # open: light on, no strobe
@@ -228,33 +310,44 @@ class BeatMovement(_Runtime):
 # "motion" = pan/tilt. The Sound window's mode (Color / Motion / Both) picks which
 # categories react to sound, so e.g. an animation can own movement while sound
 # owns the colors.
+#
+# uses_zones: the function honours a zone selection (a light bar's spots/derbies); the UI
+# only offers the zone picker for those.
 FUNCTION_TYPES: dict[str, dict] = {
     "vu_dimmer": {
-        "label": "VU dimmer", "runtime": VuDimmer, "category": "color",
+        "label": "VU dimmer", "runtime": VuDimmer, "category": "color", "uses_zones": True,
         "description": "Dimmer follows the loudness (or bass/mid/high).",
         "params": [SOURCE, num("min_pct", "Min", 0, 0, 100, 1, "%"), num("max_pct", "Max", 100, 0, 100, 1, "%"),
                    num("gain", "Gain", 1.0, 0.2, 4, 0.1), num("attack_ms", "Attack", 30, 0, 500, 5, "ms"),
                    num("release_ms", "Release", 250, 20, 2000, 10, "ms")],
     },
     "beat_flash": {
-        "label": "Beat flash", "runtime": BeatFlash, "category": "color",
+        "label": "Beat flash", "runtime": BeatFlash, "category": "color", "uses_zones": True,
         "description": "Flash to full on the beat, then fade back.",
         "params": [EVERY, num("min_pct", "Base", 5, 0, 100, 1, "%"), num("max_pct", "Peak", 100, 0, 100, 1, "%"),
                    num("decay_ms", "Decay", 250, 20, 2000, 10, "ms")],
     },
     "beat_color": {
-        "label": "Beat color chase", "runtime": BeatColor, "category": "color",
+        "label": "Beat color chase", "runtime": BeatColor, "category": "color", "uses_zones": True,
         "description": "Change color on the beat.",
         "params": [EVERY, choice("mode", "Order", "step", ["step", "random"]),
                    {"key": "palette", "label": "Colors", "kind": "palette", "default": DEFAULT_PALETTE}],
     },
+    "zone_chase": {
+        "label": "Beat zone chase", "runtime": ZoneChase, "category": "color", "uses_zones": True,
+        "description": "Light a fixture's zones (e.g. a light bar's spots and derbies) in turn on the beat.",
+        "params": [EVERY,
+                   choice("pattern", "Pattern", "sequence", ["sequence", "ping_pong", "alternate", "random"]),
+                   choice("color_mode", "Colors", "per_pass", ["fixed", "per_step", "per_pass"]),
+                   {"key": "palette", "label": "Colors", "kind": "palette", "default": DEFAULT_PALETTE}],
+    },
     "color_organ": {
-        "label": "Color organ", "runtime": ColorOrgan, "category": "color",
+        "label": "Color organ", "runtime": ColorOrgan, "category": "color", "uses_zones": True,
         "description": "Bass = red, mids = green, highs = blue.",
         "params": [num("gain", "Gain", 1.0, 0.2, 4, 0.1), num("smooth_ms", "Smooth", 120, 10, 1000, 10, "ms")],
     },
     "beat_strobe": {
-        "label": "Beat strobe", "runtime": BeatStrobe, "category": "color",
+        "label": "Beat strobe", "runtime": BeatStrobe, "category": "color", "uses_zones": True,
         "description": "A short strobe burst on the beat, then back to open.",
         "params": [choice("every", "Every", 4, [1, 2, 4, 8]), num("burst_ms", "Burst", 250, 50, 2000, 10, "ms"),
                    num("speed_pct", "Speed", 80, 1, 100, 1, "%")],
@@ -271,6 +364,7 @@ FUNCTION_TYPES: dict[str, dict] = {
 
 def function_types_for_ui() -> list[dict]:
     return [{"type": t, "label": v["label"], "category": v["category"],
+             "uses_zones": bool(v.get("uses_zones")),
              "description": v["description"], "params": v["params"]}
             for t, v in FUNCTION_TYPES.items()]
 

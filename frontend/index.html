@@ -20,6 +20,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/src/style.css" />
+  <link rel="stylesheet" href="/src/calibration.css" />
   <script type="importmap">
     {
       "imports": {
@@ -34,32 +35,48 @@
     <header id="topbar">
       <div class="brand">DMX Controller</div>
       <div id="dmx-status" class="status-pill">DMX: --</div>
+      <div class="mode-switch" title="Edit: set up the room and the rig. Show: run effects and aim moving heads.">
+        <button type="button" data-mode="edit">Edit</button>
+        <button type="button" data-mode="show">Show</button>
+      </div>
       <div class="spacer"></div>
-      <button id="btn-dmx-setup" class="toggle-btn">DMX Setup</button>
-      <button id="btn-config" class="toggle-btn">Config</button>
+      <button id="btn-dmx-setup" class="toggle-btn edit-only">DMX Setup</button>
+      <button id="btn-config" class="toggle-btn edit-only">Config</button>
+      <div class="dropdown-wrap edit-only">
+        <button id="btn-setup-menu" class="toggle-btn">Setup &#9662;</button>
+        <div id="setup-menu-dropdown" class="dropdown-menu hidden">
+          <button id="btn-patch">Patch</button>
+          <button id="btn-fixture-creator">Fixture Creator</button>
+          <button id="btn-room-shape">Room Shape</button>
+          <button id="btn-room-objects">Objects</button>
+          <button id="btn-safety-zones">Safety Zones</button>
+        </div>
+      </div>
       <div class="dropdown-wrap">
-        <button id="btn-windows-menu" class="toggle-btn">Windows &#9662;</button>
+        <button id="btn-windows-menu" class="toggle-btn">Controls &#9662;</button>
         <div id="windows-menu-dropdown" class="dropdown-menu hidden"></div>
       </div>
       <button id="btn-view-3d" class="toggle-btn active">3D View</button>
-      <button id="btn-patch" class="toggle-btn">Patch</button>
-      <button id="btn-fixture-creator" class="toggle-btn">Fixture Creator</button>
-      <button id="btn-room-shape" class="toggle-btn">Room Shape</button>
-      <button id="btn-room-objects" class="toggle-btn">Objects</button>
-      <button id="btn-safety-zones" class="toggle-btn">Safety Zones</button>
+      <button id="btn-calibrate" class="toggle-btn edit-only" title="Aim every head at one point and check where the beams land">Calibrate</button>
       <button id="btn-animations" class="toggle-btn">Animations</button>
-      <button id="btn-sound" class="toggle-btn">Sound</button>
+      <button id="btn-sound" class="toggle-btn show-only">Sound</button>
       <button id="btn-blackout" class="danger-btn">BLACKOUT</button>
     </header>
 
     <div id="main">
       <aside id="sidebar">
+        <div id="sidebar-mode" class="edit-only">
+          <span class="hint" id="sidebar-mode-hint">Edit mode: &#9998; edits, &#10005; deletes</span>
+          <button type="button" id="sidebar-edit" class="mini-btn" title="Show edit and delete buttons on groups and fixtures">Edit</button>
+        </div>
         <div class="sidebar-section">
-          <h3>Groups</h3>
+          <h3 class="section-head">Groups
+            <button type="button" id="group-add" class="mini-btn edit-only" title="Add a group">+ Add</button></h3>
           <div id="group-buttons" class="button-grid"></div>
         </div>
         <div class="sidebar-section">
-          <h3>Fixtures</h3>
+          <h3 class="section-head">Fixtures
+            <button type="button" id="fixture-add" class="mini-btn edit-only" title="Patch a new fixture">+ Add</button></h3>
           <div id="fixture-buttons" class="button-grid"></div>
         </div>
         <div class="sidebar-section" id="fixture-details-section">
@@ -113,10 +130,11 @@
               </div>
 
               <div class="subtab-pane hidden" data-subtab-pane="groups">
+                <div class="hint">Groups are added, edited and deleted from the Groups menu (Edit).</div>
                 <div id="fd-groups"></div>
               </div>
 
-              <div class="btn-row">
+              <div class="btn-row edit-only">
                 <button id="fd-save" type="button" class="primary-btn">Save</button>
                 <button id="fd-delete" type="button" class="danger-btn">Delete</button>
               </div>
@@ -131,7 +149,7 @@
 
       <main id="stage">
         <div id="scene-container"></div>
-        <div id="gizmo-toolbar" class="gizmo-toolbar">
+        <div id="gizmo-toolbar" class="gizmo-toolbar edit-only">
           <button id="gizmo-mode-translate" class="toggle-btn active" title="Move (drag XYZ arrows)">Move</button>
           <button id="gizmo-mode-yaw" class="toggle-btn" title="Yaw (drag ring around vertical axis) -- fixtures only">Yaw</button>
           <button id="gizmo-mode-pitch" class="toggle-btn" title="Pitch (drag ring around fixture's own horizontal axis) -- fixtures only">Pitch</button>
@@ -189,7 +207,7 @@
       </div>
     </div>
 
-    <div id="panel-sound" class="floating-panel sound-panel" data-panel="sound" style="display:none">
+    <div id="panel-sound" class="floating-panel sound-panel show-only" data-panel="sound" style="display:none">
       <div class="panel-header">Sound <span class="drag-handle">::</span><button class="panel-close">x</button></div>
       <div class="panel-body">
         <div class="snd-row">
@@ -237,6 +255,38 @@
       </div>
     </div>
 
+    <div id="panel-zones" class="floating-panel" data-panel="zones" style="display:none">
+      <div class="panel-header">Zones <span class="drag-handle">::</span><button class="panel-close">x</button></div>
+      <div class="panel-body">
+        <div class="hint" id="zones-hint"></div>
+        <div id="zones-controls" class="hidden">
+          <div id="zones-chips" class="zone-chips"></div>
+          <div class="hint">Find a light (flashes white):</div>
+          <div id="zones-identify" class="zone-chips"></div>
+          <label>Zone brightness <span class="pct" id="zones-dim-pct">100%</span>
+            <input type="range" id="zones-dim" min="0" max="100" value="100"></label>
+          <div class="zone-strobe">
+            <label>Strobe <span class="pct" id="zones-strobe-pct">0%</span>
+              <input type="range" id="zones-strobe" min="0" max="100" value="0"></label>
+            <div class="btn-row" id="zones-strobe-presets">
+              <button type="button" data-zstrobe="0">Off</button>
+              <button type="button" data-zstrobe="20">Slow</button>
+              <button type="button" data-zstrobe="50">Med</button>
+              <button type="button" data-zstrobe="100">Max</button>
+            </div>
+            <div class="hint zone-warning hidden" id="zones-strobe-warning"></div>
+          </div>
+          <div class="hint">Colors come from the RGB window. The master dimmer is in the Strobe / Shutter window,
+            the built-in programs and the derby motor in Custom Channels.</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel-calibrate" class="floating-panel calibrate-panel edit-only" data-panel="calibrate" style="display:none">
+      <div class="panel-header">Calibrate <span class="drag-handle">::</span><button class="panel-close">x</button></div>
+      <div class="panel-body" id="cal-body"></div>
+    </div>
+
     <div id="panel-custom" class="floating-panel" data-panel="custom">
       <div class="panel-header">Custom Channels <span class="drag-handle">::</span><button class="panel-close">x</button></div>
       <div class="panel-body" id="custom-sliders">
@@ -247,7 +297,7 @@
     <!-- Modals -->
     <div id="modal-patch" class="modal hidden">
       <div class="modal-content">
-        <h2>Patch Fixture <button class="modal-close">x</button></h2>
+        <h2><span id="patch-title">Patch Fixture</span> <button class="modal-close">x</button></h2>
         <label>Name <input id="patch-name" type="text" placeholder="Moving Head 1"></label>
         <label>Profile
           <select id="patch-profile"></select>
@@ -269,14 +319,18 @@
         <label><input id="patch-invert-pan" type="checkbox"> Invert pan</label>
         <label><input id="patch-invert-tilt" type="checkbox"> Invert tilt</label>
         <button id="patch-submit" class="primary-btn">Add Fixture</button>
-        <hr>
-        <h3>Patched fixtures</h3>
-        <div id="patch-list"></div>
-        <hr>
-        <h3>Groups</h3>
-        <label>New group name <input id="group-name-input" type="text" placeholder="Front Wash"></label>
-        <div id="group-fixture-picker"></div>
-        <button id="group-create-btn">Create Group</button>
+      </div>
+    </div>
+
+    <div id="modal-group" class="modal hidden">
+      <div class="modal-content">
+        <h2><span id="group-modal-title">New group</span> <button class="modal-close">x</button></h2>
+        <label>Name <input id="group-name" type="text" placeholder="Front wash"></label>
+        <label>Color <input id="group-color" type="color" value="#3a7bd5"></label>
+        <div class="hint hidden" id="group-all-note">This group always holds every fixture; you can rename and recolor it.</div>
+        <h3>Fixtures in this group</h3>
+        <div id="group-fixture-checks"></div>
+        <button id="group-save" class="primary-btn">Create group</button>
       </div>
     </div>
 
@@ -299,6 +353,7 @@
             <option value="generic">Generic</option>
             <option value="moving_head">Moving Head</option>
             <option value="par">PAR / Wash</option>
+            <option value="light_bar">Light bar / lamp bar (zones)</option>
             <option value="laser">Laser</option>
           </select>
         </label>
@@ -311,6 +366,22 @@
           <legend>Pan/tilt mechanical range (degrees)</legend>
           <label>Pan range <input id="fc-pan-range" type="number" value="540"></label>
           <label>Tilt range <input id="fc-tilt-range" type="number" value="270"></label>
+        </fieldset>
+        <fieldset>
+          <legend>Zones (independently colored sections, e.g. a light bar's spots and derbies)</legend>
+          <div class="hint">Leave empty for a normal fixture. Position: -1 = left ... +1 = right as seen looking
+            at the FRONT of the fixture (only used for the 3D picture). The list order is the order zone chases
+            walk. Named ranges of custom channels are kept as they are. A zone can own a channel for each of
+            its functions: color (R G B W), its own dimmer (Dim) and its strobe (Strobe). Zones may share a
+            channel (two spots on one strobe channel); the Zones window then warns that they strobe together.
+            Map a function here instead of adding a custom channel, so it gets a proper control.</div>
+          <div class="fc-zone-tools">
+            <label>Flash on <select id="fc-zone-test-fixture"></select></label>
+            <button id="fc-zones-sort" type="button">Order left to right</button>
+          </div>
+          <div id="fc-zone-list"></div>
+          <button id="fc-add-zone" type="button">+ Add zone</button>
+          <datalist id="fc-zone-kinds"><option value="spot"><option value="derby"><option value="par"><option value="cell"></datalist>
         </fieldset>
         <fieldset>
           <legend>Custom / unmapped channels (sliders with no built-in function)</legend>
@@ -328,6 +399,21 @@
     <div id="modal-config" class="modal hidden">
       <div class="modal-content">
         <h2>Config <button class="modal-close">x</button></h2>
+        <fieldset id="cfg-rooms">
+          <legend>Rooms saved in the backend</legend>
+          <p class="hint">Current room: <b id="cfg-room-current"></b>. A saved room keeps everything (room shape,
+            fixtures, groups, shows, sound effects and the fixture profiles they need) under a name, in the
+            backend, so no file is needed. Loading one replaces the current setup; the room you leave is kept
+            as "Before switching", so a switch can be undone. Saving and loading also bring saved fixture
+            profiles up to date with this version.</p>
+          <label>Save the current room as <input id="cfg-room-name" type="text" placeholder="Club Nord"></label>
+          <div class="btn-row">
+            <button id="cfg-room-save" class="primary-btn" type="button">Save room</button>
+            <button id="cfg-room-new" type="button">New empty room...</button>
+          </div>
+          <div id="cfg-room-status" class="hint"></div>
+          <div id="cfg-room-list"></div>
+        </fieldset>
         <fieldset>
           <legend>Export</legend>
           <p class="hint">Downloads the whole venue setup as one JSON file: room size/shape/fixture placement,
@@ -485,7 +571,7 @@
       <div class="modal-content wide">
         <h2>Animations <button class="modal-close">x</button></h2>
 
-        <fieldset>
+        <fieldset class="edit-only">
           <legend>3D Points -- reusable, named room-space points for path animations</legend>
           <label>Name <input id="pt-name" type="text" placeholder="Stage left"></label>
           <label>X <input id="pt-x" type="number" step="0.1" value="0"></label>
@@ -495,7 +581,7 @@
           <div id="pt-list"></div>
         </fieldset>
 
-        <fieldset>
+        <fieldset class="edit-only">
           <legend>Path Animation (relative) -- calculated, point-to-point movement + color/dimmer/strobe</legend>
           <label>Name <input id="anim-name" type="text" placeholder="Sweep"></label>
           <label>Target (fixture or group id) <input id="anim-target" type="text" placeholder="fx-xxxx or grp-xxxx"></label>
@@ -507,7 +593,7 @@
         </fieldset>
         <div id="anim-list"></div>
 
-        <fieldset>
+        <fieldset class="edit-only">
           <legend>Pattern Animation (basic) -- freestyler-style raw pan/tilt movement, no calculation, no color</legend>
           <label>Name <input id="pat-name" type="text" placeholder="Circle sweep"></label>
           <label>Target (fixture or group id) <input id="pat-target" type="text" placeholder="fx-xxxx or grp-xxxx"></label>

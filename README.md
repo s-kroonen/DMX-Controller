@@ -257,8 +257,15 @@ CI.
     inversion, and a pan/tilt calibration offset trim), and **Groups**
     (membership checkboxes) -- for editing or deleting that one fixture.
     It's collapsible, and whether it's collapsed persists across a refresh
-    (localStorage, like the floating panels). The Patch screen stays
-    add-only.
+    (localStorage, like the floating panels).
+  - The **Groups** and **Fixtures** sections of the left menu manage
+    themselves: **+ Add** creates a group (name, colour, which fixtures) or
+    opens the Patch window for a new fixture, and the **Edit** button at
+    the top of the menu shows a pencil and a cross on every entry (edit
+    opens the group dialog or the Patch window filled in with that fixture;
+    the cross asks, then deletes). Outside edit mode those buttons are
+    hidden. The built-in All lights group can be edited (name, colour) but
+    not deleted.
   - Fixtures render with a model shaped for their `fixture_type` --
     moving head (base/yoke/head), smoke machine (box + nozzle), PAR can
     (cylinder), or a plain box for anything else -- with a bright green
@@ -296,6 +303,170 @@ directly or with the head flipped over (pan + 180, negative tilt) when only that
 ranges. The bundled generic head and the Beamz MHL108 both tilt 180 degrees (up to level either
 side, measured), so they cannot aim below the horizon: such a target is flagged out of range and the tilt stops
 at level.
+
+## Edit mode and show mode
+
+The whole UI (desktop and phone) is in one of two modes, chosen with the **Edit | Show** switch at the
+top. The backend holds the mode, so every screen agrees, and it refuses (HTTP 409) what the current
+mode does not allow. It starts in edit mode.
+
+- **Edit**: patch, move and delete fixtures, room shape, objects, safety zones, groups, the Fixture
+  Creator, DMX setup, animation/pattern editing, points, config and saved rooms. The 3D drag
+  gizmo is on. Effects cannot run and heads cannot be aimed.
+- **Show**: run sound-to-light effects, play animations and patterns, aim moving heads (3D
+  click-to-aim, the Pan / Tilt window, the phone's Aim screen). Nothing can be moved or edited: those
+  buttons are simply not shown, and the sidebar Details are read-only.
+- **Both**: colors, dimmer, strobe, custom channels, zones, blackout, selecting groups and fixtures.
+
+Switching to edit stops running animations, patterns and sound-to-light, and asks first so it is
+never done by accident during a show. `PUT /api/mode {"mode": "edit"|"show"}`; every snapshot and
+websocket message carries `mode`. Markup follows it with `<body data-mode>` and the `.edit-only` /
+`.show-only` classes (`frontend/src/mode.js`).
+
+## Calibrating the heads
+
+In edit mode the **Calibrate** window (header button) and, on the phone, the **Calibrate** tab check
+where the heads really point. Choose a target point (X/Y/Z, +/- buttons, a saved animation point,
+"Pick in 3D" on the desktop, or tap a surface on the phone's Aim tab), then **Aim all here**: every
+pan/tilt head points at it with a dim red beam (~20 %), and a magenta marker shows the point in 3D. If
+the beams do not meet, nudge that head's pan/tilt offset (0.1-5 deg steps; each nudge re-aims and is
+saved), flip invert pan/tilt, **Solo** one head, or **Reset** to the offsets it had when the window
+opened. Each row shows the computed pan/tilt angles and DMX values and warns when a point is out of
+range (a head that stands on the floor cannot tilt below level, so choose a wall or ceiling point).
+
+**Sweep** moves the point along a line (X or Y), a circle or through the saved points, and every head
+follows it, so a head that is off visibly drifts away from the spot the others stay on; nudging
+offsets during a sweep takes effect immediately. Closing the window (or switching to show mode) stops
+the sweep and puts every light back as it was.
+
+### Solving a head's mounting (and position) from several marks
+
+One shared point can only show that something is off. **Solve mounting from marks...** (under each head in
+the Calibrate view, desktop and phone) finds out what: choose a mark whose room position is known (a
+room corner on the floor or at the ceiling, taken from the room shape, or a saved point), **Aim** the
+head at it, steer the beam exactly onto the mark with the pan/tilt buttons (step sizes from the finest
+16-bit step to a coarse one), **Record**. With 3+ marks in different directions **Solve** fits the
+head's yaw, pitch, pan offset and tilt offset; with 5+ it can also fit the head's **position**, so a
+head whose position was never measured can be located from the room size alone. It also tries the four
+invert-pan/tilt combinations if the current ones do not explain the marks. The result shows the
+average miss before and after, the miss per mark (a bad recording stands out) and warnings (marks
+nearly in a line, a position far from the entered one); **Apply** writes it to the fixture, **Discard**
+drops it. Head standing on the floor: use ceiling marks (it cannot tilt below level).
+
+Limits: precision is the beam-centring precision of the operator plus the accuracy of the room
+shape; the pan/tilt ranges in the profile are taken as right (a wrong range shows as a residual
+that grows with the angle); on a head whose pan axis is vertical (hung or upright) yaw and pan
+offset are the same turn, so the fit keeps the pan offset the head already had and puts the rest in
+yaw. Maths in `backend/app/room/solver.py` (nonlinear least squares on beam directions, so the
+head's two ways of reaching a point do not matter); endpoints `POST /api/calibration/solve|apply`.
+
+Endpoints (edit mode only, so the show-mode aim guard is unchanged): `POST /api/calibration/aim|beam|
+offsets|sweep|sweep/stop|pan-tilt`; the snapshot carries `calibration` (`sweeping`, `beam`). The raw
+RGB / Strobe / Pan-Tilt / Zones / Custom windows stay available in edit mode as **Test tools**, closed
+until opened; each mode remembers its own window layout. Header buttons Patch, Fixture Creator, Room
+Shape, Objects and Safety Zones are now under one **Setup** menu.
+
+## Saved rooms
+
+Besides export/import of a file, the backend keeps named snapshots of the whole venue (room,
+fixtures, groups, shows, sound config and the fixture profiles they need) in
+`backend/data/saved_rooms/`. In **Config** (edit mode): save the current room under a name, load a
+saved one, delete one, or start a **new empty room** (fixtures, groups, shows and effects are
+cleared; the sound input and levels are kept). Loading or starting a new room first keeps the room
+being left as "Before switching", so a switch can be undone. `GET /api/rooms`, `POST /api/rooms`
+(`{"name"}`), `POST /api/rooms/new`, `POST /api/rooms/{id}/load`, `DELETE /api/rooms/{id}`.
+
+### Saved copies of bundled fixture profiles stay current
+
+A copy of a bundled profile in `backend/data/fixtures/` shadows the bundled one, so when a newer
+version gained something (zones, a strobe channel), an old copy hid it. Copies that were not edited
+in the Fixture Creator (`customized`) are only snapshots, so they are rebuilt from the bundled
+profile at startup, on save, on load and on config import, keeping the pan/tilt ranges tuned on
+them; the old file goes to `backend/data/fixtures/_replaced/`. Profiles you made yourself, and
+bundled ones you changed in the Fixture Creator, are never touched. The UI says which profiles were
+updated when a room is saved, loaded or imported.
+
+## The "All lights" group
+
+`All lights` is built in: it always contains every fixture in the room. The backend adds a fixture
+to it when you patch one, removes it when you delete one, and repairs it on startup and on a config
+import (a config with no groups, or with a stale `All lights`, still ends up with every fixture in
+it). It cannot be deleted or emptied; its name and colour can be changed.
+
+## Fixtures with zones (light bars) and adding new fixture types
+
+Not every fixture is a pan/tilt head or one lamp. A light bar like the **Eurolite LED KLS-120 FX**
+(bundled as `eurolite-kls-120-fx-21ch`, 21-channel mode) is four lights in one housing: two spots
+and two derbies, each with its own RGBW. A profile describes that with **zones**:
+
+```json
+"fixture_type": "light_bar",
+"channels": { "dimmer": 1 },
+"zones": [
+  { "id": "spot1", "label": "Spot 1", "kind": "spot", "position": -1.0,
+    "channels": { "red": 3, "green": 4, "blue": 5, "white": 6, "strobe": 2 } },
+  { "id": "derby1", "label": "Derby 1", "kind": "derby", "position": -0.34,
+    "channels": { "red": 12, "green": 13, "blue": 14, "white": 15, "strobe": 11 } }
+],
+"custom_channels": [
+  { "channel": 20, "label": "Derby Motor", "ranges": [
+      { "label": "Off", "min": 0, "max": 9 }, { "label": "Low", "min": 10, "max": 29 },
+      { "label": "Medium", "min": 30, "max": 49 }, { "label": "Fast", "min": 50, "max": 255 } ] } ],
+"role_ranges": { "strobe": { "min": 10, "max": 255, "zero": 0 } }
+```
+
+- **zones**: `channels` maps the zone's functions to DMX offsets: red/green/blue/white, optionally its
+  own `dimmer` and its `strobe`. Zones may share a channel (the KLS's two spots are on one strobe
+  channel, the two derbies on another), which means they cannot be strobed apart; the Zones window says
+  so. Map a function on the zone instead of leaving it a custom channel, so it gets a proper control; `kind` groups them for quick picks ("All derbies"); `position` places the zone along the
+  fixture in the 3D picture: -1 = left ... +1 = right as seen looking at the front. The order in the
+  list is independent of it (it is the order zone chases walk), so a light bar whose lights are wired in
+  a different order than they sit is fine. A fixture with no zones is one implicit "main" zone, so
+  every other profile behaves exactly as before.
+- **custom channel `ranges`**: named spans of a channel (a motor's Low/Medium/Fast, a fixture's
+  built-in Auto/Sound programs, a strobe's Slow/Medium/Max). The Custom Channels window always shows
+  the slider across the whole channel, plus a preset button per range that jumps to the start of that
+  range; the button for the range the value is in stays lit. Without `ranges` you get just the slider.
+- **strobe per zone**: the Zones window has a Strobe slider and Off/Slow/Med/Max presets that strobe the
+  chosen zones (nothing chosen = all); the Strobe / Shutter window and a sound Beat strobe strobe every
+  strobe channel of the fixture, and a sound Beat strobe can be limited to zones like the other zone
+  functions. On the real KLS-120 FX channel 2 strobes only the spots and channel 11 only the derbies.
+  A strobe channel that is shared by zones you did not pick strobes them too, and the window warns
+  about it.
+- **role_ranges** (as for the moving heads) squeeze the logical 0-100 % dimmer/strobe into the
+  usable part of a channel, e.g. strobe DMX 10-255 with 0-9 meaning "off".
+- The **Fixture Creator** edits zones (label, kind, position, and a channel each for R G B W, Dim and
+  Strobe) and has a **Flash** button
+  per zone that flashes that zone white on a patched fixture, so you can see which physical light
+  is which while filling in positions; the Zones window has the same "Find a light" buttons.
+  Named ranges of custom channels are kept when a profile is re-saved but are edited in the
+  profile JSON (`backend/data/fixtures/*.json`, or bundle one in `backend/app/fixtures/profiles/`).
+
+In the UI:
+
+- The **Zones** window (opens when you select a zoned fixture; also in the Windows menu) picks
+  which zones the controls act on: chips per zone, quick picks per kind, nothing picked = every
+  zone. The **RGB** window then colors only those zones, and the **Zone brightness** slider dims
+  only those (on a fixture with no per-zone dimmer channel this scales the zone's color). The
+  master dimmer and strobe stay in the Strobe / Shutter window.
+- **Sound**: every color effect (VU dimmer, Beat flash, Beat color chase, Beat strobe, Color organ and
+  **Beat zone chase**, which walks the fixture's zones in turn on the beat: sequence, ping-pong,
+  checkerboard or random) gets a zone picker on its card as soon as a selected light (or a light in a
+  selected group) has zones. Pick the zones the effect drives; nothing picked = every zone. Lights
+  without zones are driven as normal whatever is picked. Two effects can share one bar: a Beat zone
+  chase on its spots and a Beat color chase on its derbies. The bar's own built-in Sound 1-3
+  programs are in the Custom Channels window.
+- **3D**: the model is picked by `fixture_type` (`buildFixtureBody` in `frontend/src/scene3d.js`;
+  unknown types get a plain box). The light bar is drawn as a mounting bar on top with a head hanging
+  below it per zone, each with the model for its `kind` (`LIGHT_HEAD_MODELS`: `spot`, `derby`, `par`;
+  add more there), glowing with its zone's live color, and no beam line since there is nothing to aim. Add a new
+  fixture family by adding a builder there; the Sound and Zones windows and the mobile Aim view work
+  from the profile data, not per-fixture code.
+- Mounting for a bar: its lights face the fixture's "home" direction, so on a stand pointing
+  forward pick *On a wall / sideways* in the Mounting picker.
+
+Trying things without touching your real venue data: in PowerShell,
+`$env:DMX_DATA_DIR = "C:\temp\dmx-test"; .\run.ps1 -Sim` runs against another data folder.
 
 ## Sound-to-light
 

@@ -27,6 +27,7 @@ export function initPanels() {
   initPanTiltPanel();
 
   onStateChange(renderCustomPanel);
+  onStateChange(syncCustomRangesFromState);
   onStateChange(syncControlsFromState);
 }
 
@@ -53,17 +54,26 @@ function syncControlsFromState() {
   const profile = state.profileById(fixture.profile_id);
   const values = state.fixtureState[fixture.id]?.values;
   if (!profile || !values) return;
-  syncRgbFromState(values);
+  syncRgbFromState(values, profile, state.fixtureState[fixture.id]?.zones);
   syncStrobeFromState(profile, values);
   syncPanTiltFromState(profile, values);
 }
 
-function syncRgbFromState(values) {
+function syncRgbFromState(values, profile, zoneState) {
   const red = document.getElementById("rgb-red");
   const green = document.getElementById("rgb-green");
   const blue = document.getElementById("rgb-blue");
   const white = document.getElementById("rgb-white");
   if ([red, green, blue, white].some(isBeingEdited)) return;
+  if (profile && profile.zones && profile.zones.length) {
+    // a fixture with zones has no single color: show the first chosen (or first) zone's
+    const chosen = profile.zones.map((z) => z.id).filter((id) => !state.zoneFilter.size || state.zoneFilter.has(id));
+    const zone = zoneState && chosen.map((id) => zoneState[id]).find(Boolean);
+    if (zone) {
+      [red.value, green.value, blue.value, white.value] = zone.color;
+    }
+    return;
+  }
   if (red && "red" in values) red.value = values.red;
   if (green && "green" in values) green.value = values.green;
   if (blue && "blue" in values) blue.value = values.blue;
@@ -109,7 +119,8 @@ function initRgbPanel() {
 
   const pushColor = () => {
     forEachTarget((id) =>
-      api.setColor(id, Number(red.value), Number(green.value), Number(blue.value), Number(white.value))
+      api.setColor(id, Number(red.value), Number(green.value), Number(blue.value), Number(white.value),
+        state.zoneFilterList())
         .catch(console.error)
     );
   };
@@ -290,6 +301,10 @@ function renderCustomPanel() {
 
   for (const { fixture, profile } of customByFixture) {
     for (const custom of profile.custom_channels) {
+      if (custom.ranges && custom.ranges.length) {
+        container.appendChild(buildRangeControl(fixture, custom));
+        continue;
+      }
       const label = document.createElement("label");
       label.textContent = `${fixture.name}: ${custom.label}`;
       const input = document.createElement("input");
@@ -304,4 +319,68 @@ function renderCustomPanel() {
       container.appendChild(label);
     }
   }
+}
+
+
+// ---- custom channels with NAMED RANGES (a motor's Low/Medium/Fast, a strobe's Slow/Medium/Max, a
+// fixture's built-in programs): a slider across the whole channel that is always there, plus one
+// preset button per range that jumps to the start of that range. The button for the range the value
+// is in stays lit. Sends the raw DMX value, like the plain custom sliders.
+
+function rangeFor(custom, value) {
+  return custom.ranges.find((r) => value >= r.min && value <= r.max) || null;
+}
+
+function buildRangeControl(fixture, custom) {
+  const wrap = document.createElement("div");
+  wrap.className = "range-control";
+  wrap.dataset.fixture = fixture.id;
+  wrap.dataset.channel = String(custom.channel);
+
+  const title = document.createElement("div");
+  title.className = "range-title";
+  title.textContent = `${fixture.name}: ${custom.label}`;
+  wrap.appendChild(title);
+
+  const buttons = document.createElement("div");
+  buttons.className = "btn-row wrap";
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "range-speed";
+  slider.min = custom.min_value;
+  slider.max = custom.max_value;
+  const send = (value) => api.setCustom(fixture.id, custom.label, value).catch(console.error);
+
+  // shows `value` on the slider and lights the preset for the range it falls in
+  const show = (value) => {
+    slider.value = value;
+    const range = rangeFor(custom, value);
+    buttons.querySelectorAll("button").forEach((b) => b.classList.toggle("active", !!range && b.dataset.label === range.label));
+  };
+
+  for (const range of custom.ranges) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = range.label;
+    btn.dataset.label = range.label;
+    btn.title = `DMX ${range.min}-${range.max}`;
+    btn.onclick = () => { show(range.min); send(range.min); };
+    buttons.appendChild(btn);
+  }
+  slider.addEventListener("input", () => { show(Number(slider.value)); send(Number(slider.value)); });
+
+  wrap.append(buttons, slider);
+  wrap._show = show;
+  wrap._slider = slider;
+  show(custom.default);
+  return wrap;
+}
+
+function syncCustomRangesFromState() {
+  document.querySelectorAll("#custom-sliders .range-control").forEach((wrap) => {
+    const values = state.fixtureState[wrap.dataset.fixture]?.values;
+    const value = values && values[`custom_${wrap.dataset.channel}`];
+    if (value === undefined || isBeingEdited(wrap._slider)) return;
+    wrap._show(value);
+  });
 }

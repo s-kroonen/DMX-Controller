@@ -18,6 +18,17 @@ def client(tmp_path, monkeypatch):
     context_module.reset_context()
 
 
+def _in_show_mode(action):
+    """Effects only run in show mode; run `action` there and go back to edit mode without the
+    stop-everything that a real switch does (the test wants the effect left on)."""
+    ctx = context_module.get_context()
+    ctx.mode = "show"
+    try:
+        return action()
+    finally:
+        ctx.mode = "edit"
+
+
 def _set_up_venue(client, custom_profile_id="custom-abc123"):
     """A room with one bundled-profile fixture and one custom-profile
     fixture, a group, a pattern, an animation, and a non-default sound
@@ -51,7 +62,8 @@ def _set_up_venue(client, custom_profile_id="custom-abc123"):
             {"time_s": 0, "target_point": {"x": 0, "y": 0, "z": 1}},
         ]}],
     }).json()
-    client.post("/api/audio/config", json={"gain": 2.5, "sensitivity": 1.7, "sound_mode": "color"})
+    _in_show_mode(lambda: client.post("/api/audio/config",
+                                      json={"gain": 2.5, "sensitivity": 1.7, "sound_mode": "color"}))
     return {"par": par, "custom": custom, "group": group, "pattern": pattern, "animation": animation}
 
 
@@ -61,7 +73,7 @@ def test_export_includes_referenced_custom_profile(client):
 
     assert bundle["room"]["name"] == "Main Stage"
     assert len(bundle["room"]["fixtures"]) == 2
-    assert len(bundle["groups"]) == 1
+    assert len(bundle["groups"]) == 2      # All lights + the venue own group
     assert len(bundle["patterns"]) == 1
     assert len(bundle["animations"]) == 1
     assert bundle["audio"]["gain"] == 2.5
@@ -99,7 +111,7 @@ def test_import_restores_full_config_on_a_fresh_install(client, tmp_path, monkey
         assert "custom-abc123" in profile_ids_after
 
         groups = fresh_client.get("/api/groups").json()
-        assert len(groups) == 1
+        assert len(groups) == 2
         patterns = fresh_client.get("/api/patterns").json()
         assert len(patterns) == 1
         animations = fresh_client.get("/api/animations").json()
@@ -149,8 +161,8 @@ def test_import_rejects_room_with_missing_profile(client):
 
 def test_import_stops_running_animations_and_patterns(client):
     venue = _set_up_venue(client)
-    client.post(f"/api/patterns/{venue['pattern']['id']}/play")
-    client.post(f"/api/animations/{venue['animation']['id']}/play")
+    _in_show_mode(lambda: client.post(f"/api/patterns/{venue['pattern']['id']}/play"))
+    _in_show_mode(lambda: client.post(f"/api/animations/{venue['animation']['id']}/play"))
 
     bundle = client.get("/api/config/export").json()
     resp = client.post("/api/config/import", json=bundle)

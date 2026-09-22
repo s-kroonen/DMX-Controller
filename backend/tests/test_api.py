@@ -51,9 +51,10 @@ def test_group_creation_and_listing(client):
     }).json()
     resp = client.post("/api/groups", json={"name": "All PARs", "fixture_ids": [fx["id"]]})
     assert resp.status_code == 200
-    groups = client.get("/api/groups").json()
-    assert len(groups) == 1
-    assert groups[0]["fixture_ids"] == [fx["id"]]
+    groups = {g["id"]: g for g in client.get("/api/groups").json()}
+    assert len(groups) == 2                                    # the built-in All lights + the new one
+    assert groups["all"]["fixture_ids"] == [fx["id"]]
+    assert [g for g in groups.values() if g["name"] == "All PARs"][0]["fixture_ids"] == [fx["id"]]
 
 
 def test_aim_endpoint_blocked_by_safety_zone(client):
@@ -66,6 +67,7 @@ def test_aim_endpoint_blocked_by_safety_zone(client):
         "min_corner": {"x": -5, "y": -5, "z": 0},
         "max_corner": {"x": 5, "y": 5, "z": 1.8},
     })
+    client.put("/api/mode", json={"mode": "show"})           # aiming is a show-mode action
     resp = client.post("/api/control/aim", json={
         "target_id": fx["id"], "x": 1, "y": 1, "z": 0.5,
     })

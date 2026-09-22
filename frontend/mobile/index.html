@@ -18,6 +18,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/mobile/style.css" />
+  <link rel="stylesheet" href="/src/calibration.css" />
   <script type="importmap">
     {
       "imports": {
@@ -27,11 +28,15 @@
     }
   </script>
 </head>
-<body>
+<body class="mobile">
   <div id="app">
     <header id="topbar">
       <div class="brand">DMX</div>
       <div id="dmx-status" class="status-pill">DMX: --</div>
+      <div class="mode-switch" title="Edit: set up. Show: run effects and aim.">
+        <button type="button" data-mode="edit">Edit</button>
+        <button type="button" data-mode="show">Show</button>
+      </div>
       <div class="spacer"></div>
       <button id="btn-blackout" class="danger-btn">BLACKOUT</button>
     </header>
@@ -44,7 +49,7 @@
       <div id="drawer-tabs">
         <button class="drawer-tab" data-drawer="lights">Lights</button>
         <button class="drawer-tab" data-drawer="shows">Shows</button>
-        <button class="drawer-tab" data-drawer="sound">Sound</button>
+        <button class="drawer-tab show-only" data-drawer="sound">Sound</button>
         <button class="drawer-tab" data-drawer="more">More</button>
       </div>
 
@@ -70,22 +75,22 @@
             <div class="subtab-bar">
               <button type="button" class="subtab-btn active" data-subtab="show-animations">Animations</button>
               <button type="button" class="subtab-btn" data-subtab="show-patterns">Patterns</button>
-              <button type="button" class="subtab-btn" data-subtab="show-points">Points</button>
+              <button type="button" class="subtab-btn edit-only" data-subtab="show-points">Points</button>
             </div>
 
             <div class="subtab-pane" data-subtab-pane="show-animations">
               <div id="anim-list" class="list"></div>
-              <button id="anim-new" class="wide-btn">+ New animation</button>
+              <button id="anim-new" class="wide-btn edit-only">+ New animation</button>
               <div id="anim-editor" class="editor hidden"></div>
             </div>
 
             <div class="subtab-pane hidden" data-subtab-pane="show-patterns">
               <div id="pattern-list" class="list"></div>
-              <button id="pattern-new" class="wide-btn">+ New pattern</button>
+              <button id="pattern-new" class="wide-btn edit-only">+ New pattern</button>
               <div id="pattern-editor" class="editor hidden"></div>
             </div>
 
-            <div class="subtab-pane hidden" data-subtab-pane="show-points">
+            <div class="subtab-pane hidden edit-only" data-subtab-pane="show-points">
               <div id="pt-list" class="list"></div>
               <div class="editor">
                 <label>Name <input id="pt-name" type="text" placeholder="Stage left"></label>
@@ -116,13 +121,16 @@
             <button id="btn-dmx-reconnect" class="wide-btn">Reconnect</button>
             <h3>Desktop UI</h3>
             <a class="wide-btn" href="/">Open full desktop UI</a>
-            <h3>Config</h3>
-            <p class="hint">Export/import the whole venue setup (room, fixtures, groups, animations,
-              patterns, sound) as one file. Import replaces everything currently set up.</p>
-            <button id="cfg-export" class="wide-btn">Export config...</button>
-            <input id="cfg-import-file" type="file" accept="application/json,.json">
-            <button id="cfg-import" class="wide-btn">Import config...</button>
-            <div id="cfg-import-status" class="hint"></div>
+            <div class="edit-only">
+              <h3>Config</h3>
+              <p class="hint">Export/import the whole venue setup (room, fixtures, groups, animations,
+                patterns, sound) as one file. Import replaces everything currently set up. Rooms saved in
+                the backend are loaded from the desktop UI (Config).</p>
+              <button id="cfg-export" class="wide-btn">Export config...</button>
+              <input id="cfg-import-file" type="file" accept="application/json,.json">
+              <button id="cfg-import" class="wide-btn">Import config...</button>
+              <div id="cfg-import-status" class="hint"></div>
+            </div>
           </div>
         </div>
       </aside>
@@ -132,6 +140,7 @@
           <button class="main-tab active" data-screen="color">Color</button>
           <button class="main-tab" data-screen="control">Control</button>
           <button class="main-tab" data-screen="aim">Aim</button>
+          <button class="main-tab edit-only" data-screen="calibrate">Calibrate</button>
         </div>
 
         <div id="selection-bar" class="selection-bar">Nothing selected</div>
@@ -187,8 +196,13 @@
 
         <!-- AIM (3D) -->
         <section id="screen-aim" class="screen hidden">
-          <div class="hint">Drag to orbit, pinch to zoom, tap a surface to aim the current selection there.</div>
+          <div class="hint show-only">Drag to orbit, pinch to zoom, tap a surface to aim the current selection there.</div>
+          <div class="hint edit-only">Calibration: tap a surface and every head aims there (beams go on). Watch whether they meet; fix offsets on the Calibrate tab.</div>
           <div id="aim3d-container"></div>
+        </section>
+        <!-- CALIBRATE (edit mode) -->
+        <section id="screen-calibrate" class="screen hidden">
+          <div id="cal-mobile"></div>
         </section>
       </main>
     </div>

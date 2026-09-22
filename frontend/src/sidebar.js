@@ -1,13 +1,39 @@
 import { state, notifyStateChange } from "./state.js";
+import { openGroupModal, deleteGroupWithConfirm, ALL_GROUP_ID } from "./groupModal.js";
+import { openPatchModal, deleteFixtureWithConfirm } from "./patch.js";
+import { onModeChange } from "./mode.js";
 
+// The left menu: groups and fixtures as buttons. Click selects (shift-click adds). In edit mode
+// (the Edit button at the top) every item also shows edit and delete buttons, and the + buttons
+// add a group / fixture. Groups use their own dialog; fixtures go through the Patch window.
+//
 // The WS broadcast triggers a state-change notification ~10x/second even
 // when nothing selection-relevant changed. Rebuilding the button DOM that
 // often tears elements out from under in-flight clicks/drags, so buttons
-// are only rebuilt when the underlying id list actually changes; otherwise
-// just the "selected" class is refreshed on the existing nodes.
+// are only rebuilt when what they show actually changes (ids, names, colours);
+// otherwise just the "selected" class is refreshed on the existing nodes.
 
-let lastGroupIds = "";
-let lastFixtureIds = "";
+let lastGroupKey = "";
+let lastFixtureKey = "";
+
+export function initSidebar() {
+  const sidebar = document.getElementById("sidebar");
+  const toggle = document.getElementById("sidebar-edit");
+  toggle.onclick = () => {
+    const on = !sidebar.classList.contains("editing");
+    sidebar.classList.toggle("editing", on);
+    toggle.classList.toggle("active", on);
+    toggle.textContent = on ? "Done" : "Edit";
+  };
+  // Show mode has no edit buttons at all; going back to edit mode starts with them closed
+  onModeChange(() => {
+    sidebar.classList.remove("editing");
+    toggle.classList.remove("active");
+    toggle.textContent = "Edit";
+  });
+  document.getElementById("group-add").onclick = () => openGroupModal();
+  document.getElementById("fixture-add").onclick = () => openPatchModal();
+}
 
 export function renderSidebar() {
   renderGroupButtons();
@@ -15,23 +41,54 @@ export function renderSidebar() {
   renderSelectionSummary();
 }
 
+function miniButton(text, title, onClick, className = "") {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = `mini-btn ${className}`.trim();
+  btn.textContent = text;
+  btn.title = title;
+  btn.onclick = (evt) => { evt.stopPropagation(); onClick(); };
+  return btn;
+}
+
+// One menu entry: the select button plus the edit-mode buttons (hidden by CSS outside edit mode)
+function buildItem(id, label, { color, onEdit, onDelete, noun }) {
+  const item = document.createElement("div");
+  item.className = "select-item";
+  item.dataset.id = id;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "select-btn";
+  btn.textContent = label;
+  if (color) btn.style.background = color;
+  btn.onclick = (evt) => {
+    state.toggleSelection(id, !evt.shiftKey);
+    notifyStateChange();
+  };
+  item.appendChild(btn);
+  const tools = document.createElement("span");
+  tools.className = "item-tools";
+  tools.appendChild(miniButton("✎", `Edit ${noun}`, onEdit));
+  if (onDelete) tools.appendChild(miniButton("✕", `Delete ${noun}`, onDelete, "danger"));
+  item.appendChild(tools);
+  return item;
+}
+
 function renderGroupButtons() {
   const container = document.getElementById("group-buttons");
-  const idKey = state.groups.map((g) => g.id).join(",");
-  if (idKey !== lastGroupIds) {
-    lastGroupIds = idKey;
+  const key = JSON.stringify(state.groups.map((g) => [g.id, g.name, g.color, g.fixture_ids.length]));
+  if (key !== lastGroupKey) {
+    lastGroupKey = key;
     container.innerHTML = "";
     for (const group of state.groups) {
-      const btn = document.createElement("button");
-      btn.dataset.id = group.id;
-      btn.style.background = group.color;
-      btn.textContent = group.name;
-      btn.title = `${group.fixture_ids.length} fixture(s)`;
-      btn.onclick = (evt) => {
-        state.toggleSelection(group.id, !evt.shiftKey);
-        notifyStateChange();
-      };
-      container.appendChild(btn);
+      const item = buildItem(group.id, group.name, {
+        color: group.color,
+        noun: "group",
+        onEdit: () => openGroupModal(state.groupById(group.id) || group),
+        onDelete: group.id === ALL_GROUP_ID ? null : () => deleteGroupWithConfirm(state.groupById(group.id) || group),
+      });
+      item.firstChild.title = `${group.fixture_ids.length} fixture(s)`;
+      container.appendChild(item);
     }
   }
   updateSelectedClasses(container);
@@ -39,27 +96,24 @@ function renderGroupButtons() {
 
 function renderFixtureButtons() {
   const container = document.getElementById("fixture-buttons");
-  const idKey = state.room.fixtures.map((f) => f.id).join(",");
-  if (idKey !== lastFixtureIds) {
-    lastFixtureIds = idKey;
+  const key = JSON.stringify(state.room.fixtures.map((f) => [f.id, f.name]));
+  if (key !== lastFixtureKey) {
+    lastFixtureKey = key;
     container.innerHTML = "";
     for (const fixture of state.room.fixtures) {
-      const btn = document.createElement("button");
-      btn.dataset.id = fixture.id;
-      btn.textContent = fixture.name;
-      btn.onclick = (evt) => {
-        state.toggleSelection(fixture.id, !evt.shiftKey);
-        notifyStateChange();
-      };
-      container.appendChild(btn);
+      container.appendChild(buildItem(fixture.id, fixture.name, {
+        noun: "fixture",
+        onEdit: () => openPatchModal(state.fixtureById(fixture.id) || fixture),
+        onDelete: () => deleteFixtureWithConfirm(state.fixtureById(fixture.id) || fixture),
+      }));
     }
   }
   updateSelectedClasses(container);
 }
 
 function updateSelectedClasses(container) {
-  for (const btn of container.children) {
-    btn.className = "select-btn" + (state.isSelected(btn.dataset.id) ? " selected" : "");
+  for (const item of container.children) {
+    item.firstChild.classList.toggle("selected", state.isSelected(item.dataset.id));
   }
 }
 

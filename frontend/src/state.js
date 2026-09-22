@@ -12,7 +12,11 @@ export const state = {
   profiles: [],
   fixtureState: {},
   dmxStatus: {},
+  mode: "edit", // "edit" | "show" -- held by the backend, so every screen agrees (see mode.js)
+  calibration: { sweeping: false, sweep_ids: [], beam: [] }, // backend: calibration sweep / beam (edit mode)
+  calibrationPoint: null, // {x, y, z} target of the calibration tools; both 3D views draw a marker there
   selection: new Set(), // fixture ids and/or group ids
+  zoneFilter: new Set(), // zone ids picked in the Zones window; empty = every zone
 
   fixtureById(id) {
     return this.room.fixtures.find((f) => f.id === id);
@@ -38,6 +42,35 @@ export const state = {
     } else {
       this.selection.add(id);
     }
+  },
+
+  zoneFilterList() {
+    return [...this.zoneFilter];
+  },
+
+  // Expand any mix of fixture and group ids to concrete fixture ids.
+  expandIds(ids) {
+    const out = new Set();
+    for (const id of ids) {
+      const group = this.groupById(id);
+      if (group) group.fixture_ids.forEach((fid) => out.add(fid));
+      else out.add(id);
+    }
+    return [...out];
+  },
+
+  // The zones the given fixtures declare ({id, label, kind}), first-seen order, de-duplicated.
+  // Fixtures without declared zones (moving heads, PARs) contribute none.
+  zonesForFixtures(fixtureIds) {
+    const seen = new Map();
+    for (const fid of fixtureIds) {
+      const fixture = this.fixtureById(fid);
+      const profile = fixture && this.profileById(fixture.profile_id);
+      for (const z of (profile && profile.zones) || []) {
+        if (!seen.has(z.id)) seen.set(z.id, { id: z.id, label: z.label, kind: z.kind });
+      }
+    }
+    return [...seen.values()];
   },
 
   // A selection may reference groups; expand to the concrete fixture ids

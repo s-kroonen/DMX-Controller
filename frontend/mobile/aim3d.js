@@ -2,7 +2,10 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { api } from "../src/api.js";
 import { state, onStateChange, notifyStateChange } from "../src/state.js";
-import { createFixtureMesh } from "../src/scene3d.js";
+import { createFixtureMesh, updateZoneGlow } from "../src/scene3d.js";
+import { makeCalibrationMarker, updateCalibrationMarker } from "../src/calMarker.js";
+import { setPoint, setBeam, beamIsOn } from "../src/calibration.js";
+import { notify } from "../src/mode.js";
 
 // A smaller, view+tap-to-aim-only version of the desktop 3D view -- same
 // per-type fixture body models and the same beam ("light path") math via
@@ -14,7 +17,7 @@ import { createFixtureMesh } from "../src/scene3d.js";
 // mapped into Three's Y-up world by rotating the whole root -90deg
 // around X, so children work directly in room-space coordinates.
 
-let scene, camera, renderer, controls, roomRoot, fixturesGroup;
+let scene, camera, renderer, controls, roomRoot, fixturesGroup, calMarker;
 let aimSurfaces = [];
 let fixtureMeshes = new Map();
 let lastStaticKey = "";
@@ -39,6 +42,8 @@ export function initAim3D(hostElement) {
   scene.add(roomRoot);
   fixturesGroup = new THREE.Group();
   roomRoot.add(fixturesGroup);
+  calMarker = makeCalibrationMarker();
+  roomRoot.add(calMarker);
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
   const dir = new THREE.DirectionalLight(0xffffff, 0.5);
@@ -84,6 +89,7 @@ function clearGroup(group) {
 }
 
 function rebuild() {
+  updateCalibrationMarker(calMarker, state.calibrationPoint, state.mode === "edit");
   const staticKey = JSON.stringify({ floor: state.room.floor_points, dims: state.room.dimensions });
   if (staticKey !== lastStaticKey) {
     lastStaticKey = staticKey;
@@ -217,6 +223,8 @@ function updateFixtures() {
 
     const beamBlocked = fixtureState && fixtureState.blocked_by_safety_zone;
     entry.beam.material.color.set(beamBlocked ? 0xff0000 : color);
+    entry.beam.visible = !entry.isLightBar;   // a bar has nothing to aim; its zones glow instead
+    if (entry.zoneMaterials) updateZoneGlow(entry, fixtureState);
   }
 }
 
@@ -245,11 +253,19 @@ function onTap(evt) {
     }
   }
 
-  if (state.selection.size === 0) return;
   const hits = raycaster.intersectObjects(aimSurfaces, false);
   if (hits.length === 0) return;
   const point = hits[0].point.clone();
   roomRoot.worldToLocal(point);
+  if (state.mode === "edit") {
+    // calibration: every pan/tilt head aims at the tapped point (lit, so the beams can be compared)
+    (async () => {
+      if (!beamIsOn()) await setBeam(true);
+      await setPoint({ x: point.x, y: point.y, z: point.z }, true);
+    })().catch((err) => notify(err.message));
+    return;
+  }
+  if (state.selection.size === 0) return;
   for (const targetId of state.selection) {
     api.aim(targetId, point.x, point.y, point.z).catch(console.error);
   }

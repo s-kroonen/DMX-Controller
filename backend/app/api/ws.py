@@ -40,7 +40,7 @@ async def broadcast_loop(hz: float = 10.0) -> None:
         if not _clients:
             continue
         ctx = get_context()
-        payload = json.dumps(ctx.engine.snapshot())
+        payload = json.dumps(ctx.snapshot())
         dead = []
         for client in list(_clients):
             try:

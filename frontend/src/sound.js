@@ -239,7 +239,7 @@ function patchLater(id, body) {
 function renderFunctions(functions) {
   // Rebuild only when something structural/edited-elsewhere changed, so polling
   // never steals focus from an input being dragged or typed in.
-  const sig = JSON.stringify([currentMode, functions.map((f) => [f.id, f.enabled, f.error, f.targets, f.params])]);
+  const sig = JSON.stringify([currentMode, functions.map((f) => [f.id, f.enabled, f.error, f.targets, f.zones, f.params])]);
   if (sig === lastFunctionsSig) return;
   if (document.activeElement && el("snd-functions").contains(document.activeElement)
       && lastFunctionsSig !== "") {
@@ -318,6 +318,40 @@ function functionCard(fn) {
     targets.appendChild(lab);
   }
   card.appendChild(targets);
+
+  // zones: only for functions that honour them, and only if a target has zones to pick
+  const zones = schema && schema.uses_zones ? state.zonesForFixtures(state.expandIds(fn.targets)) : [];
+  if (zones.length) {
+    const box = document.createElement("div");
+    box.className = "fn-targets fn-zones";
+    box.title = "Which zones this effect drives. Lights without zones are driven as normal.";
+    const pickedZones = new Set(fn.zones || []);
+    const push = () => patchLater(fn.id, { zones: [...pickedZones] });
+    const zoneChip = (label, checked, onChange) => {
+      const lab = document.createElement("label");
+      lab.className = "chip zone";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = checked;
+      cb.onchange = () => onChange(cb);
+      lab.append(cb, ` ${label}`);
+      box.appendChild(lab);
+    };
+    zoneChip("all zones", pickedZones.size === 0, (cb) => {
+      pickedZones.clear();
+      push();
+      box.querySelectorAll("input").forEach((other) => { if (other !== cb) other.checked = false; });
+      cb.checked = true;
+    });
+    for (const z of zones) {
+      zoneChip(z.label, pickedZones.has(z.id), (cb) => {
+        cb.checked ? pickedZones.add(z.id) : pickedZones.delete(z.id);
+        box.querySelector("input").checked = pickedZones.size === 0;
+        push();
+      });
+    }
+    card.appendChild(box);
+  }
 
   // parameters
   for (const p of schema ? schema.params : []) {

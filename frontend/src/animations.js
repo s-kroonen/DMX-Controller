@@ -135,11 +135,14 @@ async function renderAnimationList() {
     row.innerHTML = `<span>${anim.name} (${anim.tracks.length} track(s), ${anim.loop ? "loop" : "once"})</span>`;
     const playBtn = document.createElement("button");
     playBtn.textContent = "Play";
+    playBtn.className = "show-only";
     playBtn.onclick = () => api.playAnimation(anim.id).catch(console.error);
     const stopBtn = document.createElement("button");
     stopBtn.textContent = "Stop";
+    stopBtn.className = "show-only";
     stopBtn.onclick = () => api.stopAnimation(anim.id).catch(console.error);
     const delBtn = document.createElement("button");
+    delBtn.className = "edit-only";
     delBtn.textContent = "Delete";
     delBtn.onclick = async () => {
       await api.deleteAnimation(anim.id);
@@ -184,11 +187,14 @@ async function renderPatternList() {
     row.innerHTML = `<span>${pattern.name} (${pattern.shape}, ${pattern.speed_hz}Hz)</span>`;
     const playBtn = document.createElement("button");
     playBtn.textContent = "Play";
+    playBtn.className = "show-only";
     playBtn.onclick = () => api.playPattern(pattern.id).catch(console.error);
     const stopBtn = document.createElement("button");
     stopBtn.textContent = "Stop";
+    stopBtn.className = "show-only";
     stopBtn.onclick = () => api.stopPattern(pattern.id).catch(console.error);
     const delBtn = document.createElement("button");
+    delBtn.className = "edit-only";
     delBtn.textContent = "Delete";
     delBtn.onclick = async () => {
       await api.deletePattern(pattern.id);

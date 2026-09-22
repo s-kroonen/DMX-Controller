@@ -1,4 +1,5 @@
 import { listPanels, isPanelOpen, openPanel, closePanel } from "./panelWindows.js";
+import { onModeChange } from "./mode.js";
 
 // The one place to get a closed control window back: closing a panel
 // with no reopen path would strand it until localStorage is cleared, so
@@ -22,7 +23,27 @@ export function initWindowsMenu() {
     }
   });
 
-  renderMenu();
+  // the same windows are called test tools while setting up and controls while running the show
+  onModeChange((mode) => {
+    button.innerHTML = `${mode === "edit" ? "Test tools" : "Controls"} &#9662;`;
+    dropdown.classList.add("hidden");
+    renderMenu();
+  });
+  initSetupMenu();
+}
+
+// Patch, Fixture Creator, Room Shape, Objects and Safety Zones live under one Setup button
+function initSetupMenu() {
+  const button = document.getElementById("btn-setup-menu");
+  const dropdown = document.getElementById("setup-menu-dropdown");
+  button.onclick = (evt) => {
+    evt.stopPropagation();
+    dropdown.classList.toggle("hidden");
+  };
+  dropdown.addEventListener("click", () => dropdown.classList.add("hidden"));
+  document.addEventListener("click", (evt) => {
+    if (!dropdown.contains(evt.target) && evt.target !== button) dropdown.classList.add("hidden");
+  });
 }
 
 function renderMenu() {

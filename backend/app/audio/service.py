@@ -185,23 +185,27 @@ class SoundService:
     # -- functions -----------------------------------------------------------
 
     def add_function(self, fn_type: str, targets: list[str], params: Optional[dict] = None,
-                     enabled: bool = True) -> SoundFunction:
+                     enabled: bool = True, zones: Optional[list[str]] = None) -> SoundFunction:
         if fn_type not in FUNCTION_TYPES:
             raise ValueError(f"unknown sound function type {fn_type!r}")
         with self._lock:
             fn = SoundFunction(id=f"snd-{uuid.uuid4().hex[:8]}", type=fn_type, targets=list(targets),
-                               enabled=enabled, params={**default_params(fn_type), **(params or {})})
+                               enabled=enabled, params={**default_params(fn_type), **(params or {})},
+                               zones=list(zones or []))
             self.functions[fn.id] = fn
             self._persist()
             return fn
 
     def update_function(self, fn_id: str, targets: Optional[list[str]] = None,
-                        enabled: Optional[bool] = None, params: Optional[dict] = None) -> SoundFunction:
+                        enabled: Optional[bool] = None, params: Optional[dict] = None,
+                        zones: Optional[list[str]] = None) -> SoundFunction:
         with self._lock:
             fn = self.functions[fn_id]
             if targets is not None:
                 self._release(fn)   # let go of the old targets first
                 fn.targets = list(targets)
+            if zones is not None:
+                fn.zones = list(zones)
             if params is not None:
                 fn.params.update(params)
             if enabled is not None:

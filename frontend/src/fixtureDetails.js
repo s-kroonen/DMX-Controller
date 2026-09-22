@@ -3,6 +3,7 @@ import { state, notifyStateChange } from "./state.js";
 import { reloadRoomAndGroups } from "./main_data.js";
 import { loadPref, savePref } from "./uiPrefs.js";
 import { wireMountSelect } from "./mounting.js";
+import { onModeChange } from "./mode.js";
 
 // Inline, non-modal fixture detail editor living under the fixture list in
 // the sidebar (unlike every other editor, which is a popup) -- loads the
@@ -11,9 +12,9 @@ import { wireMountSelect } from "./mounting.js";
 // same way floating panels remember open/closed state.
 
 const COLLAPSED_PREF_KEY = "fixtureDetailsCollapsed";
+const ALL_GROUP_ID = "all"; // the built-in group that always holds every fixture
 
 let lastLoadedFixtureId = null;
-let lastGroupsKey = "";
 // Set the moment any field is edited, cleared on save or on switching to a
 // different fixture -- the WS snapshot broadcasts ~10x/second, and without
 // this an edit gets silently overwritten by the next broadcast the instant
@@ -23,6 +24,12 @@ let formDirty = false;
 let syncDetailsMount = () => {};
 
 export function initFixtureDetailsPanel() {
+  // In show mode the details are only for reading: nothing here can be changed
+  onModeChange((mode) => {
+    document.querySelectorAll("#fixture-details-form input, #fixture-details-form select").forEach((field) => {
+      field.disabled = mode !== "edit";
+    });
+  });
   syncDetailsMount = wireMountSelect("fd-mount", "fd-pitch");
   const header = document.getElementById("fixture-details-toggle");
   header.onclick = () => setCollapsed(!isCollapsed());
@@ -107,11 +114,7 @@ export function renderFixtureDetailsPanel() {
     fillForm(fixture);
   }
 
-  const groupsKey = state.groups.map((g) => `${g.id}:${g.fixture_ids.join(",")}`).join("|");
-  if (fixtureChanged || groupsKey !== lastGroupsKey || !formDirty) {
-    lastGroupsKey = groupsKey;
-    renderGroupCheckboxes(fixture);
-  }
+  renderGroupCheckboxes(fixture);
 
   lastLoadedFixtureId = fixture.id;
 }
@@ -146,30 +149,68 @@ function fillForm(fixture) {
 // source of truth for who's in it), not on the fixture -- so toggling a
 // checkbox here updates that group's member list via PUT /api/groups/{id}
 // rather than anything on the fixture itself.
+//
+// The rows are built once per (fixture, group list) and afterwards only their
+// checked state is refreshed in place, so a click is never interrupted by a
+// rebuild. The built-in "All lights" group always holds everyone, so it is a
+// plain note rather than a checkbox that could not be changed.
+let groupRowsKey = "";
+
 function renderGroupCheckboxes(fixture) {
   const container = document.getElementById("fd-groups");
-  container.innerHTML = "";
-  if (state.groups.length === 0) {
-    container.innerHTML = '<div class="hint">No groups yet -- create one from Patch.</div>';
-    return;
+  const key = JSON.stringify([fixture.id, state.groups.map((g) => [g.id, g.name])]);
+  if (key !== groupRowsKey) {
+    groupRowsKey = key;
+    container.innerHTML = "";
+    for (const group of state.groups) {
+      if (group.id === ALL_GROUP_ID) {
+        const note = document.createElement("div");
+        note.className = "hint";
+        note.textContent = `\u2713 ${group.name} (every fixture is always in it)`;
+        container.appendChild(note);
+        continue;
+      }
+      const label = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.dataset.group = group.id;
+      cb.disabled = state.mode !== "edit";
+      cb.onchange = () => toggleGroupMembership(fixture.id, group.id, cb);
+      label.append(cb, document.createTextNode(group.name));
+      container.appendChild(label);
+    }
+    if (container.children.length === 0 || state.groups.every((g) => g.id === ALL_GROUP_ID)) {
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.textContent = "No other groups yet -- use + Add under Groups in the menu.";
+      container.appendChild(hint);
+    }
   }
-  for (const group of state.groups) {
-    const label = document.createElement("label");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = group.fixture_ids.includes(fixture.id);
-    cb.onchange = async () => {
-      const fixtureIds = cb.checked
-        ? [...group.fixture_ids, fixture.id]
-        : group.fixture_ids.filter((id) => id !== fixture.id);
-      await api.updateGroup(group.id, { name: group.name, fixture_ids: fixtureIds, color: group.color });
-      await reloadRoomAndGroups();
-      notifyStateChange();
-    };
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(" " + group.name));
-    container.appendChild(label);
+  container.querySelectorAll("input[data-group]").forEach((cb) => {
+    cb.disabled = state.mode !== "edit" || cb.dataset.busy === "1";
+    if (cb.dataset.busy === "1") return; // a change is being saved
+    const group = state.groupById(cb.dataset.group);
+    cb.checked = !!group && group.fixture_ids.includes(fixture.id);
+  });
+}
+
+async function toggleGroupMembership(fixtureId, groupId, cb) {
+  const wanted = cb.checked;
+  cb.disabled = true;
+  cb.dataset.busy = "1";
+  try {
+    const group = state.groupById(groupId); // read now, not when the row was built
+    const others = group.fixture_ids.filter((id) => id !== fixtureId);
+    await api.updateGroup(groupId, {
+      name: group.name, color: group.color, fixture_ids: wanted ? [...others, fixtureId] : others,
+    });
+  } catch (err) {
+    console.error(err);
   }
+  cb.dataset.busy = "0";
+  cb.disabled = false;
+  await reloadRoomAndGroups(); // the checkbox then shows what is really saved
+  notifyStateChange();
 }
 
 async function saveFixture() {
@@ -200,7 +241,11 @@ async function saveFixture() {
   const profile = state.profileById(payload.profile_id);
   const panRange = Number(document.getElementById("fd-pan-range").value) || 540;
   const tiltRange = Number(document.getElementById("fd-tilt-range").value) || 270;
-  if (profile && (profile.pan_range_deg !== panRange || profile.tilt_range_deg !== tiltRange)) {
+  // Only a fixture that has pan AND tilt has a mechanical range to save. Saving it for any other
+  // fixture (a light bar) wrote a copy of the whole profile into the user's data with default
+  // ranges, which then shadowed the bundled profile forever.
+  const canPanTilt = !!(profile && profile.channels && profile.channels.pan && profile.channels.tilt);
+  if (canPanTilt && (profile.pan_range_deg !== panRange || profile.tilt_range_deg !== tiltRange)) {
     await api.saveProfile({ ...profile, pan_range_deg: panRange, tilt_range_deg: tiltRange });
   }
 
