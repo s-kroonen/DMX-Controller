@@ -1,0 +1,7 @@
+# Desktop app shell only -- the backend's own deps stay in
+# backend/requirements.txt. Install both before building.
+pywebview>=5.0
+pystray>=0.19
+pillow>=10.0
+pyinstaller>=6.0
+pyinstaller-hooks-contrib>=2024.0  # supplies the sounddevice/PortAudio DLL hook

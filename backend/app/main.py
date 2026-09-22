@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -14,8 +13,9 @@ from .api.sound_routes import router as sound_router
 from .api.ws import broadcast_loop
 from .api.ws import router as ws_router
 from .context import get_context
+from .paths import bundle_root
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+FRONTEND_DIR = bundle_root() / "frontend"
 
 
 class NoCacheStaticFiles(StaticFiles):

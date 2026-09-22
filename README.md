@@ -16,6 +16,8 @@ the architecture follows the build order below.
 backend/   FastAPI service: fixture profiles, room/IK/safety, show engine,
            animation engine, DMX4ALL serial driver, REST + WebSocket API
 frontend/  Vanilla JS + Three.js web UI (no build step) served by the backend
+desktop/   Packages backend+frontend into a double-clickable Windows exe
+           (pywebview native window + system tray, PyInstaller build)
 docs/      DMX4ALL protocol investigation notes
 ```
 
@@ -95,6 +97,48 @@ backend -- check `GET /api/dmx/status` (or the DMX Setup panel) for
 The DMX4ALL wire protocol (38400 baud, `C?`/`G` handshake, acknowledged
 block writes, blackout release) is documented in `docs/DMX4ALL_PROTOCOL.md`; the handshake is verified
 against a real dongle. Only `backend/app/dmx/dmx4all.py` touches the wire.
+
+## Packaged desktop app (Windows exe)
+
+`desktop/` wraps the same backend + frontend into a double-clickable app --
+no terminal, no venv, nothing to install on the target machine. It's the
+same FastAPI server and the same web UI, not a rewrite; the exe just starts
+the server in-process and shows it in a native window instead of a browser
+tab.
+
+- The server still binds `0.0.0.0`, so phones and other PCs on the LAN can
+  connect exactly as with `run.ps1 -Lan` -- the tray icon's tooltip lists
+  this machine's LAN addresses.
+- The window opens via **pywebview**, which on Windows uses the Edge
+  WebView2 runtime (full Chromium) -- the Three.js 3D view renders the same
+  as in a normal Edge/Chrome tab. WebView2 ships with Windows 10/11 by
+  default; on the rare machine without it, Windows offers to install it
+  automatically the first time an app needs it.
+- Closing the window hides it to a system tray icon instead of quitting --
+  other devices may still be actively controlling lights through it. Use
+  the tray icon's **Quit** to actually stop the server.
+- Double-launching the exe never starts a second server (which would fight
+  the first for the DMX port): it detects one already running and just
+  opens another window onto it.
+- Packaged data (room/groups/animations/fixtures/sound config) lives in
+  `%LOCALAPPDATA%\DMXController\data` instead of `backend/data/`, since the
+  install location isn't guaranteed writable and isn't a stable path for a
+  onefile build. Running from source (`uvicorn`/`run.ps1`) is unaffected --
+  it still uses `backend/data/`.
+
+**Building it** (once, on Windows, with `backend/requirements.txt` and
+`desktop/requirements.txt` both installed into the active venv):
+
+```powershell
+pip install -r backend\requirements.txt -r desktop\requirements.txt
+pyinstaller desktop\dmx_controller.spec
+```
+
+Output: `dist\DMX Controller\DMX Controller.exe`. `desktop/server_lifecycle.py`
+(the server start/stop/probe logic, no GUI dependency) has its own test
+suite (`pytest desktop/tests`); the pywebview/tray window behavior itself
+needs a real Windows display to verify by hand -- it can't run headless in
+CI.
 
 ## What's here
 

@@ -15,10 +15,11 @@ import json
 from pathlib import Path
 
 from .groups.model import Group
+from .paths import user_data_dir
 from .room.model import Room
 from .show.animation import Animation, PatternAnimation
 
-DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DEFAULT_DATA_DIR = user_data_dir()
 
 
 class Storage:
