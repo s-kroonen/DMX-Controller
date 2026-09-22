@@ -3,11 +3,12 @@ name: Build Windows desktop app
 # Builds the packaged exe (desktop/dmx_controller.spec) on a real Windows
 # runner and smoke-tests it. This exists because the exe can't be built or
 # run from the Linux sandbox development happens in -- this is the only
-# automated check of the PyInstaller bundling (sounddevice's PortAudio DLL,
-# uvicorn's dynamically-loaded protocol backends, frontend/profile data)
-# short of building it by hand on a real Windows machine. It does NOT
-# verify the pywebview window or tray icon actually look right -- only that
-# the exe launches and the backend inside it answers.
+# automated check of the PyInstaller bundling (PyAudioWPatch, uvicorn's
+# dynamically-loaded protocol backends, frontend/profile data) short of
+# building it by hand on a real Windows machine. It does NOT verify the
+# pywebview window or tray icon actually look right -- only that the exe
+# launches and the backend inside it (including the audio module actually
+# being bundled) answers.
 
 on:
   push:
@@ -59,7 +60,22 @@ jobs:
           }
           Write-Host "Built: $exe"
 
-      - name: Smoke test -- launch the exe and confirm the backend answers
+      - name: Verify PyAudioWPatch was actually bundled
+        shell: pwsh
+        run: |
+          # It's a lazy, try/except-guarded import (app/audio/capture.py) so
+          # PyInstaller's static analysis can silently drop it -- the app
+          # would still build and launch fine, just with sound-to-light
+          # quietly broken. Check the bundle directly instead of trusting
+          # a clean build.
+          $found = Get-ChildItem -Path "dist/DMX Controller" -Recurse -Filter "*pyaudiowpatch*"
+          if (-not $found) {
+            throw "pyaudiowpatch was not bundled into the exe -- check desktop/dmx_controller.spec's hiddenimports"
+          }
+          Write-Host "Found bundled PyAudioWPatch files:"
+          $found | ForEach-Object { Write-Host "  $($_.FullName)" }
+
+      - name: Smoke test -- launch the exe and confirm the backend (incl. audio) answers
         shell: pwsh
         run: |
           $exe = "dist/DMX Controller/DMX Controller.exe"
@@ -72,9 +88,24 @@ jobs:
               if ($resp.StatusCode -eq 200) { $ready = $true; break }
             } catch {}
           }
-          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
           if (-not $ready) {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
             throw "Packaged exe never answered http://127.0.0.1:8000/api/room within 30s"
+          }
+
+          # The CI runner has no real audio hardware, so a 503 here can be
+          # legitimate ("no WASAPI device") -- what must NOT happen is the
+          # specific "needs PyAudioWPatch" message, which means the module
+          # itself failed to import inside the frozen exe.
+          try {
+            $audioResp = Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/audio/devices" -UseBasicParsing -TimeoutSec 5 -SkipHttpErrorCheck
+            if ($audioResp.Content -match "needs PyAudioWPatch") {
+              if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+              throw "Packaged exe cannot import PyAudioWPatch -- sound-to-light is broken in this build"
+            }
+            Write-Host "Audio module check passed (response: $($audioResp.StatusCode))."
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
           }
           Write-Host "Smoke test passed."
 

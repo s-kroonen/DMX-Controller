@@ -8,6 +8,7 @@
 # and easier to debug than onefile; the frontend/profile data sits next to
 # the exe instead of being re-extracted to a temp dir on every launch).
 
+import sys
 from pathlib import Path
 
 block_cipher = None
@@ -36,6 +37,15 @@ hiddenimports = [
     "uvicorn.protocols.websockets.websockets_impl",
     "uvicorn.protocols.websockets.wsproto_impl",
 ]
+
+if sys.platform == "win32":
+    # app/audio/capture.py imports this lazily, inside a try/except, purely
+    # so the module works on non-Windows dev machines that don't have it
+    # installed -- PyInstaller's static analysis doesn't reliably follow
+    # that pattern, so without this the packaged exe would silently lose
+    # sound-to-light (a clean 503 "needs PyAudioWPatch", not a crash, so it
+    # would go unnoticed without deliberately testing the Sound panel).
+    hiddenimports.append("pyaudiowpatch")
 
 a = Analysis(
     [str(REPO_ROOT / "desktop" / "launcher.py")],

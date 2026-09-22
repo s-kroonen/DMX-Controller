@@ -4,4 +4,4 @@ pywebview>=5.0
 pystray>=0.19
 pillow>=10.0
 pyinstaller>=6.0
-pyinstaller-hooks-contrib>=2024.0  # supplies the sounddevice/PortAudio DLL hook
+pyinstaller-hooks-contrib>=2024.0
