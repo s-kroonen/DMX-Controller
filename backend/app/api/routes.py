@@ -12,6 +12,7 @@ from ..dmx.usb_procs import find_holders
 from ..fixtures.qxf_import import parse_qxf
 from ..fixtures.schema import ChannelRange, CustomChannel, FixtureProfile, RoleRange, Zone
 from ..groups.model import ALL_GROUP_ID, Group
+from ..room.solver import HeadParams, Observation, dmx_to_angle, solve as solve_head
 from ..room.model import (
     AnimationPoint,
     FixtureInstance,
@@ -104,6 +105,32 @@ class CalibrationSweepIn(BaseModel):
     seconds_per_leg: float = 3.0
 
 
+class MarkObservationIn(PointIn):
+    """The beam was on the mark at (x, y, z) when the head's pan/tilt channels read these values."""
+
+    pan: int
+    pan_fine: int = 0
+    tilt: int
+    tilt_fine: int = 0
+
+
+class CalibrationSolveIn(BaseModel):
+    fixture_id: str
+    observations: list[MarkObservationIn]
+    solve_position: bool = False
+
+
+class CalibrationApplyIn(BaseModel):
+    fixture_id: str
+    yaw_deg: float
+    pitch_deg: float
+    pan_offset_deg: float
+    tilt_offset_deg: float
+    inverted_pan: bool
+    inverted_tilt: bool
+    position: Optional[PointIn] = None
+
+
 class CalibrationPanTiltIn(BaseModel):
     target_id: str
     pan: int
@@ -155,6 +182,63 @@ def calibration_offsets(payload: CalibrationOffsetsIn):
         p = payload.point
         result = ctx.engine.calibration_aim([payload.fixture_id], Vec3(p.x, p.y, p.z)).get(payload.fixture_id)
     return {"fixture": instance.to_dict(), "result": result}
+
+
+def _head_params(instance) -> HeadParams:
+    return HeadParams(Vec3(instance.position.x, instance.position.y, instance.position.z),
+                      instance.orientation.yaw_deg, instance.orientation.pitch_deg,
+                      instance.pan_offset_deg, instance.tilt_offset_deg, instance.inverted_pan,
+                      instance.inverted_tilt)
+
+
+def _params_dict(p: HeadParams) -> dict:
+    return {"yaw_deg": round(p.yaw_deg, 3), "pitch_deg": round(p.pitch_deg, 3),
+            "pan_offset_deg": round(p.pan_offset_deg, 3), "tilt_offset_deg": round(p.tilt_offset_deg, 3),
+            "inverted_pan": p.inverted_pan, "inverted_tilt": p.inverted_tilt,
+            "position": {"x": round(p.position.x, 3), "y": round(p.position.y, 3), "z": round(p.position.z, 3)}}
+
+
+@router.post("/calibration/solve", dependencies=EDIT)
+def calibration_solve(payload: CalibrationSolveIn):
+    """Fit the head's mounting (and, with enough marks, its position) to where the operator had the beam
+    on marks of known position. Nothing is changed: /calibration/apply writes the result."""
+    ctx = get_context()
+    instance = ctx.engine.room.fixtures.get(payload.fixture_id)
+    if instance is None:
+        raise HTTPException(404, "fixture not found")
+    profile = ctx.engine.profile_for(payload.fixture_id)
+    if not profile.has_pan_tilt():
+        raise HTTPException(400, "that fixture has no pan/tilt")
+    pan_range, tilt_range = profile.pan_range_deg or 540.0, profile.tilt_range_deg or 270.0
+    observations = [Observation(Vec3(o.x, o.y, o.z), dmx_to_angle(o.pan, o.pan_fine, pan_range),
+                                dmx_to_angle(o.tilt, o.tilt_fine, tilt_range)) for o in payload.observations]
+    try:
+        fit = solve_head(_head_params(instance), observations, payload.solve_position)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"before": _params_dict(_head_params(instance)), "after": _params_dict(fit.params),
+            "rms_before_deg": round(fit.rms_before_deg, 3), "rms_deg": round(fit.rms_deg, 3),
+            "residuals_deg": [round(r, 3) for r in fit.residuals_deg], "solved_position": fit.solved_position,
+            "changed_flags": fit.changed_flags, "warnings": fit.warnings}
+
+
+@router.post("/calibration/apply", dependencies=EDIT)
+def calibration_apply(payload: CalibrationApplyIn):
+    ctx = get_context()
+    instance = ctx.engine.room.fixtures.get(payload.fixture_id)
+    if instance is None:
+        raise HTTPException(404, "fixture not found")
+    instance.orientation.yaw_deg = round(payload.yaw_deg, 3)
+    instance.orientation.pitch_deg = round(payload.pitch_deg, 3)
+    instance.pan_offset_deg = max(-180.0, min(180.0, round(payload.pan_offset_deg, 3)))
+    instance.tilt_offset_deg = max(-180.0, min(180.0, round(payload.tilt_offset_deg, 3)))
+    instance.inverted_pan = payload.inverted_pan
+    instance.inverted_tilt = payload.inverted_tilt
+    if payload.position is not None:
+        p = payload.position
+        instance.position = ctx.engine.room.clamp_position(Vec3(p.x, p.y, p.z))
+    ctx.persist_room()
+    return {"fixture": instance.to_dict()}
 
 
 @router.post("/calibration/sweep", dependencies=EDIT)

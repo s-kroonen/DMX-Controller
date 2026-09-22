@@ -194,3 +194,106 @@ def test_raw_pan_tilt_works_in_edit_mode_for_test_tools(client):
     ctx = context_module.get_context()
     assert client.post("/api/calibration/pan-tilt", json={"target_id": "h1", "pan": 100, "tilt": 50}).status_code == 200
     assert dmx(ctx, "h1", "pan") == 100 and dmx(ctx, "h1", "tilt") == 50
+
+
+# ---- solving a head's mounting from marks ---------------------------------------------------------------
+
+MARKS = [(0, 0, 0), (6, 0, 0), (6, 8, 0), (0, 8, 0), (3, 4, 0), (0, 4, 2.0), (6, 4, 2.0)]
+
+
+def record_marks(client, fid, marks=MARKS):
+    """Aim at each mark with the head's TRUE mounting and record the pan/tilt it took: what an operator
+    who steers the beam onto each mark would have written down."""
+    obs = []
+    for x, y, z in marks:
+        r = client.post("/api/calibration/aim", json={"target_ids": [fid], "x": x, "y": y, "z": z}).json()["results"][fid]
+        assert r["ok"] and r["in_range"], (x, y, z, r)
+        obs.append({"x": x, "y": y, "z": z, "pan": r["pan_dmx"], "pan_fine": r["pan_fine_dmx"],
+                    "tilt": r["tilt_dmx"], "tilt_fine": r["tilt_fine_dmx"]})
+    return obs
+
+
+def set_fixture(client, fid, **fields):
+    current = next(f for f in client.get("/api/room").json()["fixtures"] if f["id"] == fid)
+    body = {"name": current["name"], "profile_id": current["profile_id"], "start_address": current["start_address"],
+            "position": current["position"], "orientation": current["orientation"],
+            "pan_offset_deg": current["pan_offset_deg"], "tilt_offset_deg": current["tilt_offset_deg"],
+            "inverted_pan": current["inverted_pan"], "inverted_tilt": current["inverted_tilt"], **fields}
+    assert client.put(f"/api/room/fixtures/{fid}", json=body).status_code == 200
+
+
+def test_a_whole_calibration_session_recovers_the_true_mounting(client):
+    add(client, "h1", HEAD, 1, x=2.0, y=3.0, z=3.4)
+    true = {"yaw_deg": 40.0, "pitch_deg": 0.0, "roll_deg": 0.0}
+    set_fixture(client, "h1", orientation=true, pan_offset_deg=7.0, tilt_offset_deg=-4.0)
+    observations = record_marks(client, "h1")
+    set_fixture(client, "h1", orientation={"yaw_deg": 52.0, "pitch_deg": 6.0, "roll_deg": 0.0},
+                pan_offset_deg=0.0, tilt_offset_deg=0.0)                   # what the app believed before
+
+    fit = client.post("/api/calibration/solve", json={"fixture_id": "h1", "observations": observations}).json()
+    assert fit["rms_before_deg"] > 3.0 and fit["rms_deg"] < 0.1
+    assert fit["after"]["tilt_offset_deg"] == pytest.approx(-4.0, abs=0.2)
+    assert client.get("/api/room").json()["fixtures"][0]["orientation"]["yaw_deg"] == 52.0     # solving changes nothing
+
+    applied = client.post("/api/calibration/apply", json={
+        "fixture_id": "h1", **{k: fit["after"][k] for k in ("yaw_deg", "pitch_deg", "pan_offset_deg", "tilt_offset_deg",
+                                                              "inverted_pan", "inverted_tilt")}}).json()["fixture"]
+    # the applied mounting explains every recording: the beam direction that goes with each recorded pan/tilt
+    # points at its mark (compared as directions, since the head may reach a point by more than one pan/tilt)
+    import math
+
+    from app.fixtures.library import FixtureLibrary
+    from app.room.ik import beam_from_pan_tilt
+    from app.room.model import Orientation
+    from app.room.solver import dmx_to_angle
+
+    profile = FixtureLibrary().get(HEAD)
+    for o in observations:
+        d = beam_from_pan_tilt(
+            Orientation(applied["orientation"]["yaw_deg"], applied["orientation"]["pitch_deg"], 0.0),
+            dmx_to_angle(o["pan"], o["pan_fine"], profile.pan_range_deg), dmx_to_angle(o["tilt"], o["tilt_fine"], profile.tilt_range_deg),
+            applied["inverted_pan"], applied["inverted_tilt"], applied["pan_offset_deg"], applied["tilt_offset_deg"])
+        to_mark = (o["x"] - applied["position"]["x"], o["y"] - applied["position"]["y"], o["z"] - applied["position"]["z"])
+        n = math.sqrt(sum(c * c for c in to_mark))
+        cosine = (d.x * to_mark[0] + d.y * to_mark[1] + d.z * to_mark[2]) / n
+        assert math.degrees(math.acos(min(1.0, cosine))) < 0.3
+    assert applied["tilt_offset_deg"] == fit["after"]["tilt_offset_deg"]
+
+
+def test_the_position_can_be_solved_and_applied(client):
+    add(client, "h1", HEAD, 1, x=2.0, y=3.0, z=3.4)
+    set_fixture(client, "h1", orientation={"yaw_deg": 40.0, "pitch_deg": 0.0, "roll_deg": 0.0}, pan_offset_deg=5.0)
+    observations = record_marks(client, "h1")
+    set_fixture(client, "h1", position={"x": 2.4, "y": 2.8, "z": 3.2}, orientation={"yaw_deg": 46.0, "pitch_deg": 4.0, "roll_deg": 0.0},
+                pan_offset_deg=0.0)
+    fit = client.post("/api/calibration/solve", json={"fixture_id": "h1", "observations": observations,
+                                                      "solve_position": True}).json()
+    assert fit["solved_position"] and fit["rms_deg"] < 0.2
+    pos = fit["after"]["position"]
+    assert (pos["x"], pos["y"], pos["z"]) == pytest.approx((2.0, 3.0, 3.4), abs=0.1)
+    fixture = client.post("/api/calibration/apply", json={"fixture_id": "h1", **{
+        k: fit["after"][k] for k in ("yaw_deg", "pitch_deg", "pan_offset_deg", "tilt_offset_deg", "inverted_pan",
+                                     "inverted_tilt", "position")}}).json()["fixture"]
+    assert fixture["position"]["x"] == pytest.approx(2.0, abs=0.1)
+
+
+def test_solving_needs_enough_marks_and_a_pan_tilt_fixture(client):
+    add(client, "h1", HEAD, 1, x=2.0, y=3.0, z=3.4)
+    add(client, "par", PAR, 40)
+    two = record_marks(client, "h1", MARKS[:2])
+    assert client.post("/api/calibration/solve", json={"fixture_id": "h1", "observations": two}).status_code == 400
+    assert client.post("/api/calibration/solve", json={"fixture_id": "par", "observations": two}).status_code == 400
+    assert client.post("/api/calibration/solve", json={"fixture_id": "nope", "observations": two}).status_code == 404
+    assert client.post("/api/calibration/apply", json={"fixture_id": "nope", "yaw_deg": 0, "pitch_deg": 0, "pan_offset_deg": 0,
+                                                       "tilt_offset_deg": 0, "inverted_pan": False,
+                                                       "inverted_tilt": False}).status_code == 404
+
+
+def test_solving_and_applying_are_refused_in_show_mode(client):
+    add(client, "h1", HEAD, 1, x=2.0, y=3.0, z=3.4)
+    observations = record_marks(client, "h1")
+    client.put("/api/mode", json={"mode": "show"})
+    assert client.post("/api/calibration/solve", json={"fixture_id": "h1", "observations": observations}).status_code == 409
+    assert client.post("/api/calibration/apply", json={"fixture_id": "h1", "yaw_deg": 0, "pitch_deg": 0, "pan_offset_deg": 0,
+                                                       "tilt_offset_deg": 0, "inverted_pan": False,
+                                                       "inverted_tilt": False}).status_code == 409

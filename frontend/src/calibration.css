@@ -39,3 +39,18 @@ body.mobile .cal-view label { display: flex; flex-direction: column; font-size: 
 body.mobile .cal-view input[type=checkbox] { width: auto; margin: 0 6px 0 0; }
 
 .cal-view .hidden { display: none !important; }
+
+/* solver */
+.cal-view .cal-solver { margin-top: 6px; border-top: 1px dashed var(--panel-border); padding-top: 4px; font-size: 0.85em; }
+.cal-view .cal-solver summary { cursor: pointer; color: var(--text-dim); }
+.cal-view .cal-steer { display: flex; align-items: center; gap: 4px; margin: 6px 0; flex-wrap: wrap; }
+.cal-view .cal-steer button { padding: 3px 10px; }
+.cal-view .cal-steer select { width: auto; }
+.cal-view .cal-ob { display: flex; justify-content: space-between; align-items: center; font-size: 0.8em; padding: 1px 0; }
+.cal-view .cal-ob button { padding: 0 6px; font-size: 0.8em; }
+.cal-view .cal-solvepos { display: flex !important; flex-direction: row !important; align-items: center; gap: 4px; margin: 6px 0; font-size: 0.8em; }
+.cal-view .cal-solve { width: 100%; }
+.cal-view .cal-fit { margin-top: 6px; font-size: 0.8em; }
+.cal-view .cal-fit-head { font-weight: bold; margin-bottom: 3px; }
+.cal-view .cal-fit-warn { color: #e8b24a; margin: 3px 0; }
+.cal-view .cal-fit .cal-btns { margin-top: 6px; }

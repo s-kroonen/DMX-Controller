@@ -3,7 +3,7 @@ import { notify } from "./mode.js";
 import {
   cal, onCalibrationChange, panTiltFixtures, includedIds, setIncluded, rememberOriginals, currentPoint,
   setPoint, aimAll, aimOne, nudge, setOffsetField, resetOffsets, setBeam, beamIsOn, beamIds, solo,
-  isSweeping, startSweep, stopSweep,
+  isSweeping, startSweep, stopSweep, marks, steer, record, removeObservation, solveFor, applyFit, discardFit,
 } from "./calibration.js";
 
 // The calibration controls, mounted into a container by the desktop Calibrate window and by the
@@ -89,9 +89,9 @@ export function mountCalibrationView(container, opts = {}) {
   }
   const saved = $(".cal-saved");
   saved.onchange = guard(() => {
-    const point = (state.room.animation_points || []).find((pt) => pt.id === saved.value);
+    const mark = marks().find((m) => m.id === saved.value);
     saved.value = "";
-    return point ? setPoint(point.position, true) : undefined;
+    return mark ? setPoint(mark.position, true) : undefined;
   });
   if (opts.onPick) $(".cal-pick").onclick = () => opts.onPick();
   else $(".cal-pick").classList.add("hidden");
@@ -148,7 +148,33 @@ export function mountCalibrationView(container, opts = {}) {
           <button type="button" class="cal-one">Aim</button>
           <button type="button" class="cal-solo">Solo</button>
           <button type="button" class="cal-reset">Reset</button>
-        </div>`;
+        </div>
+        <details class="cal-solver">
+          <summary>Solve mounting from marks...</summary>
+          <div class="hint">Finds where this head really is and how it is mounted. For each of 3+ different marks whose
+            position you know (pick one above: a room corner or a saved point): <b>Aim</b> at it, steer the beam
+            exactly onto the mark, <b>Record</b>. 5+ marks can also find the head's position.</div>
+          <div class="cal-steer">
+            <span class="cal-off-label">Pan</span>
+            <button type="button" data-axis="pan" data-d="-1">\u25C0</button>
+            <button type="button" data-axis="pan" data-d="1">\u25B6</button>
+            <span class="cal-off-label">Tilt</span>
+            <button type="button" data-axis="tilt" data-d="-1">\u25BC</button>
+            <button type="button" data-axis="tilt" data-d="1">\u25B2</button>
+            <select class="cal-stepsize">
+              <option value="1">finest</option><option value="16">fine</option><option value="64">medium</option>
+              <option value="256">coarse</option>
+            </select>
+          </div>
+          <div class="cal-btns">
+            <button type="button" class="cal-record primary-btn">Record on mark</button>
+            <button type="button" class="cal-clear">Clear marks</button>
+          </div>
+          <div class="cal-obs"></div>
+          <label class="cal-solvepos"><input type="checkbox"> also solve the position (5+ marks)</label>
+          <button type="button" class="cal-solve">Solve</button>
+          <div class="cal-fit"></div>
+        </details>`;
       row.querySelector(".cal-name").textContent = f.name;
       row.querySelector(".cal-inc").onchange = (e) => setIncluded(f.id, e.target.checked);
       row.querySelectorAll("button[data-f]").forEach((btn) => {
@@ -166,6 +192,18 @@ export function mountCalibrationView(container, opts = {}) {
       });
       row.querySelector(".cal-solo").onclick = guard(() => solo(f.id));
       row.querySelector(".cal-reset").onclick = guard(() => resetOffsets(f.id));
+      row.querySelectorAll(".cal-steer button").forEach((btn) => {
+        btn.onclick = guard(() => steer(f.id, btn.dataset.axis, Number(btn.dataset.d)));
+      });
+      row.querySelector(".cal-stepsize").onchange = (e) => { cal.stepSize = Number(e.target.value); };
+      row.querySelector(".cal-record").onclick = guard(async () => { record(f.id); });
+      row.querySelector(".cal-clear").onclick = () => {
+        cal.observations[f.id] = [];
+        delete cal.fits[f.id];
+        refresh();
+      };
+      row.querySelector(".cal-solvepos input").onchange = (e) => { cal.solvePosition = e.target.checked; };
+      row.querySelector(".cal-solve").onclick = guard(() => solveFor(f.id));
       rows.appendChild(row);
     }
   }
@@ -186,12 +224,21 @@ export function mountCalibrationView(container, opts = {}) {
       if (document.activeElement !== input) input.value = p[input.dataset.axis];
     });
     const savedSelect = $(".cal-saved");
-    const points = state.room.animation_points || [];
-    const savedKey = JSON.stringify(points.map((pt) => [pt.id, pt.name]));
+    const knownMarks = marks();
+    const savedKey = JSON.stringify(knownMarks.map((m) => [m.id, m.label]));
     if (savedSelect.dataset.key !== savedKey) {
       savedSelect.dataset.key = savedKey;
-      savedSelect.innerHTML = '<option value="">Saved point...</option>'
-        + points.map((pt) => `<option value="${pt.id}">${pt.name}</option>`).join("");
+      let html = '<option value="">Known mark...</option>';
+      let group = null;
+      for (const m of knownMarks) {
+        if (m.group !== group) {
+          if (group !== null) html += "</optgroup>";
+          html += `<optgroup label="${m.group}">`;
+          group = m.group;
+        }
+        html += `<option value="${m.id}">${m.label.replace(/</g, "&lt;")}</option>`;
+      }
+      savedSelect.innerHTML = html + (group !== null ? "</optgroup>" : "");
     }
     const beam = beamIsOn();
     const beamBtn = $(".cal-beam");
@@ -225,7 +272,81 @@ export function mountCalibrationView(container, opts = {}) {
         ? `pan ${fmt(r.pan_angle_deg)}° (DMX ${r.pan_dmx})   tilt ${fmt(r.tilt_angle_deg)}° (DMX ${r.tilt_dmx})`
         : "";
       row.classList.toggle("lit", beamIds().includes(f.id));
+      refreshSolver(row, f);
     });
+  }
+
+  // the solver part of one fixture's row: recorded marks, and the result of the last solve
+  function refreshSolver(row, f) {
+    const obs = cal.observations[f.id] || [];
+    const list = row.querySelector(".cal-obs");
+    const listKey = JSON.stringify(obs.map((o) => [o.label, o.pan, o.pan_fine, o.tilt, o.tilt_fine]));
+    if (list.dataset.key !== listKey) {
+      list.dataset.key = listKey;
+      list.innerHTML = "";
+      obs.forEach((o, i) => {
+        const item = document.createElement("div");
+        item.className = "cal-ob";
+        const text = document.createElement("span");
+        text.textContent = `#${i + 1} ${o.label}`;
+        const del = document.createElement("button");
+        del.type = "button";
+        del.textContent = "\u2715";
+        del.title = "Remove this recording";
+        del.onclick = () => removeObservation(f.id, i);
+        item.append(text, del);
+        list.appendChild(item);
+      });
+    }
+    const summary = row.querySelector(".cal-solver summary");
+    summary.textContent = obs.length ? `Solve mounting from marks (${obs.length} recorded)...` : "Solve mounting from marks...";
+    const stepSelect = row.querySelector(".cal-stepsize");
+    if (document.activeElement !== stepSelect) stepSelect.value = String(cal.stepSize);
+    row.querySelector(".cal-solvepos input").checked = cal.solvePosition;
+    renderFit(row.querySelector(".cal-fit"), f);
+  }
+
+  function renderFit(box, f) {
+    const fit = cal.fits[f.id];
+    const key = fit ? JSON.stringify(fit) : "";
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+    box.innerHTML = "";
+    if (!fit) return;
+    const add = (tag, text, cls) => {
+      const el = document.createElement(tag);
+      if (cls) el.className = cls;
+      el.textContent = text;
+      box.appendChild(el);
+      return el;
+    };
+    add("div", `Average miss: ${fit.rms_before_deg}\u00b0 \u2192 ${fit.rms_deg}\u00b0`, "cal-fit-head");
+    const rows = [["yaw", "yaw_deg"], ["pitch", "pitch_deg"], ["pan offset", "pan_offset_deg"], ["tilt offset", "tilt_offset_deg"]];
+    for (const [label, key2] of rows) add("div", `${label}: ${fit.before[key2]} \u2192 ${fit.after[key2]}`, "cal-fit-row");
+    if (fit.solved_position) {
+      const b = fit.before.position;
+      const a = fit.after.position;
+      add("div", `position: (${b.x}, ${b.y}, ${b.z}) \u2192 (${a.x}, ${a.y}, ${a.z})`, "cal-fit-row");
+    }
+    if (fit.changed_flags) {
+      add("div", `invert pan ${fit.before.inverted_pan} \u2192 ${fit.after.inverted_pan}, invert tilt `
+        + `${fit.before.inverted_tilt} \u2192 ${fit.after.inverted_tilt}`, "cal-fit-row");
+    }
+    add("div", `Miss per mark: ${fit.residuals_deg.map((r, i) => `#${i + 1} ${r}\u00b0`).join("  ")}`, "cal-fit-row");
+    for (const w of fit.warnings) add("div", w, "cal-fit-warn");
+    const buttons = document.createElement("div");
+    buttons.className = "cal-btns";
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.className = "primary-btn";
+    apply.textContent = "Apply";
+    apply.onclick = guard(() => applyFit(f.id));
+    const discard = document.createElement("button");
+    discard.type = "button";
+    discard.textContent = "Discard";
+    discard.onclick = () => discardFit(f.id);
+    buttons.append(apply, discard);
+    box.appendChild(buttons);
   }
 
   onStateChange(refresh);

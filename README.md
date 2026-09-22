@@ -295,6 +295,27 @@ follows it, so a head that is off visibly drifts away from the spot the others s
 offsets during a sweep takes effect immediately. Closing the window (or switching to show mode) stops
 the sweep and puts every light back as it was.
 
+### Solving a head's mounting (and position) from several marks
+
+One shared point can only show that something is off. **Solve mounting from marks...** (under each head in
+the Calibrate view, desktop and phone) finds out what: choose a mark whose room position is known (a
+room corner on the floor or at the ceiling, taken from the room shape, or a saved point), **Aim** the
+head at it, steer the beam exactly onto the mark with the pan/tilt buttons (step sizes from the finest
+16-bit step to a coarse one), **Record**. With 3+ marks in different directions **Solve** fits the
+head's yaw, pitch, pan offset and tilt offset; with 5+ it can also fit the head's **position**, so a
+head whose position was never measured can be located from the room size alone. It also tries the four
+invert-pan/tilt combinations if the current ones do not explain the marks. The result shows the
+average miss before and after, the miss per mark (a bad recording stands out) and warnings (marks
+nearly in a line, a position far from the entered one); **Apply** writes it to the fixture, **Discard**
+drops it. Head standing on the floor: use ceiling marks (it cannot tilt below level).
+
+Limits: precision is the beam-centring precision of the operator plus the accuracy of the room
+shape; the pan/tilt ranges in the profile are taken as right (a wrong range shows as a residual
+that grows with the angle); on a head whose pan axis is vertical (hung or upright) yaw and pan
+offset are the same turn, so the fit keeps the pan offset the head already had and puts the rest in
+yaw. Maths in `backend/app/room/solver.py` (nonlinear least squares on beam directions, so the
+head's two ways of reaching a point do not matter); endpoints `POST /api/calibration/solve|apply`.
+
 Endpoints (edit mode only, so the show-mode aim guard is unchanged): `POST /api/calibration/aim|beam|
 offsets|sweep|sweep/stop|pan-tilt`; the snapshot carries `calibration` (`sweeping`, `beam`). The raw
 RGB / Strobe / Pan-Tilt / Zones / Custom windows stay available in edit mode as **Test tools**, closed

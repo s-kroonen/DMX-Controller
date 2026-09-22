@@ -39,6 +39,11 @@ export const api = {
   calSweep: (ids, points, seconds) =>
     req("POST", "/calibration/sweep", { target_ids: ids, points, seconds_per_leg: seconds }),
   calSweepStop: () => req("POST", "/calibration/sweep/stop"),
+  calSolve: (fixtureId, observations, solvePosition) =>
+    req("POST", "/calibration/solve", { fixture_id: fixtureId, observations, solve_position: solvePosition }),
+  calApply: (body) => req("POST", "/calibration/apply", body),
+  calPanTilt: (id, pan, tilt, panFine, tiltFine) =>
+    req("POST", "/calibration/pan-tilt", { target_id: id, pan, tilt, pan_fine: panFine, tilt_fine: tiltFine }),
 
   getMode: () => req("GET", "/mode"),
   setMode: (mode) => req("PUT", "/mode", { mode }),

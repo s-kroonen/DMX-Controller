@@ -453,6 +453,8 @@ class ShowEngine:
             values = self.state_for(fid).values
             result["pan_dmx"] = values.get("pan")
             result["tilt_dmx"] = values.get("tilt")
+            result["pan_fine_dmx"] = values.get("pan_fine", 0)
+            result["tilt_fine_dmx"] = values.get("tilt_fine", 0)
             results[fid] = result
         return results
 

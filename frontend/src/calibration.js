@@ -19,6 +19,11 @@ export const cal = {
   shape: "line-x",       // sweep path: line-x | line-y | circle | saved
   span: 1.5,             // meters from the point to the end of the line / the circle radius
   seconds: 3,            // seconds per leg of the sweep
+  observations: {},      // fixture id -> [{x, y, z, label, pan, pan_fine, tilt, tilt_fine}] recorded for the solver
+  fits: {},              // fixture id -> the last solve result, until applied or discarded
+  raw: {},               // fixture id -> {pan, tilt}: the 16-bit pan/tilt the head was last sent
+  stepSize: 16,          // 16-bit units per steering click (1 = finest, 256 = one coarse step)
+  solvePosition: false,  // also fit the head's position (needs more marks)
 };
 
 const listeners = new Set();
@@ -48,7 +53,7 @@ export function setIncluded(id, on) {
 
 export function rememberOriginals() {
   for (const f of panTiltFixtures()) {
-    if (!(f.id in cal.original)) {
+    if (!cal.original[f.id]) {
       cal.original[f.id] = {
         pan_offset_deg: f.pan_offset_deg || 0, tilt_offset_deg: f.tilt_offset_deg || 0,
         inverted_pan: !!f.inverted_pan, inverted_tilt: !!f.inverted_tilt,
@@ -84,17 +89,24 @@ export function setPoint(p, aim = false) {
   return aim ? aimAll() : Promise.resolve();
 }
 
+function takeResults(results) {
+  Object.assign(cal.results, results);
+  for (const [id, r] of Object.entries(results)) {
+    if (r.ok) cal.raw[id] = { pan: r.pan_dmx * 256 + (r.pan_fine_dmx || 0), tilt: r.tilt_dmx * 256 + (r.tilt_fine_dmx || 0) };
+  }
+}
+
 export async function aimAll() {
   const ids = includedIds();
   if (!ids.length) return;
   const { results } = await api.calAim(ids, currentPoint());
-  Object.assign(cal.results, results);
+  takeResults(results);
   changed();
 }
 
 export async function aimOne(id) {
   const { results } = await api.calAim([id], currentPoint());
-  Object.assign(cal.results, results);
+  takeResults(results);
   changed();
 }
 
@@ -113,6 +125,7 @@ export async function nudge(id, field, direction) {
 }
 
 export async function resetOffsets(id) {
+  rememberOriginals();
   const original = cal.original[id];
   if (!original) return;
   const { result } = await api.calOffsets({ fixture_id: id, ...original, point: currentPoint() });
@@ -163,6 +176,102 @@ export async function startSweep() {
 
 export async function stopSweep() {
   await api.calSweepStop();
+}
+
+// ---- the solver: known marks, steering the beam onto them, recording, solving -----------------------------
+
+// Points whose room position is known without measuring: the saved points and the room's corners
+// (from the room shape), on the floor and at the ceiling.
+export function marks() {
+  const list = [];
+  for (const pt of state.room.animation_points || []) {
+    list.push({ id: `pt:${pt.id}`, group: "Saved points", label: pt.name, position: { ...pt.position } });
+  }
+  const dims = state.room.dimensions || { width: 10, depth: 10, height: 4 };
+  const floor = (state.room.floor_points && state.room.floor_points.length)
+    ? state.room.floor_points
+    : [{ x: 0, y: 0 }, { x: dims.width, y: 0 }, { x: dims.width, y: dims.depth }, { x: 0, y: dims.depth }];
+  floor.forEach((p, i) => list.push({
+    id: `cf:${i}`, group: "Room corners, floor", label: `Corner ${i + 1} (${round(p.x)}, ${round(p.y)})`,
+    position: { x: p.x, y: p.y, z: 0 },
+  }));
+  floor.forEach((p, i) => list.push({
+    id: `ct:${i}`, group: "Room corners, ceiling", label: `Corner ${i + 1} at ${round(dims.height)} m`,
+    position: { x: p.x, y: p.y, z: dims.height },
+  }));
+  return list;
+}
+
+function markLabel(p) {
+  const hit = marks().find((m) => Math.abs(m.position.x - p.x) < 0.005 && Math.abs(m.position.y - p.y) < 0.005
+    && Math.abs(m.position.z - p.z) < 0.005);
+  return hit ? hit.label : `(${p.x}, ${p.y}, ${p.z})`;
+}
+
+function rawFor(id) {
+  if (cal.raw[id]) return cal.raw[id];
+  const v = (state.fixtureState[id] && state.fixtureState[id].values) || {};
+  if (v.pan === undefined || v.tilt === undefined) return null;
+  return { pan: v.pan * 256 + (v.pan_fine || 0), tilt: v.tilt * 256 + (v.tilt_fine || 0) };
+}
+
+// Move the head's raw 16-bit pan or tilt by `direction` steps of cal.stepSize (to put the beam exactly on a mark)
+export async function steer(id, axis, direction) {
+  let raw = rawFor(id);
+  if (!raw) {
+    await aimOne(id);
+    raw = rawFor(id);
+    if (!raw) return;
+  }
+  const next = { ...raw, [axis]: Math.max(0, Math.min(65535, raw[axis] + direction * cal.stepSize)) };
+  cal.raw[id] = next;
+  await api.calPanTilt(id, next.pan >> 8, next.tilt >> 8, next.pan & 255, next.tilt & 255);
+  changed();
+}
+
+// The head's beam is on the current target point right now: keep that as one observation
+export function record(id) {
+  const raw = rawFor(id);
+  if (!raw) throw new Error("Aim the head first, then steer the beam onto the mark.");
+  const p = currentPoint();
+  (cal.observations[id] = cal.observations[id] || []).push({
+    x: p.x, y: p.y, z: p.z, label: markLabel(p),
+    pan: raw.pan >> 8, pan_fine: raw.pan & 255, tilt: raw.tilt >> 8, tilt_fine: raw.tilt & 255,
+  });
+  delete cal.fits[id];
+  changed();
+}
+
+export function removeObservation(id, index) {
+  (cal.observations[id] || []).splice(index, 1);
+  delete cal.fits[id];
+  changed();
+}
+
+export async function solveFor(id) {
+  const obs = cal.observations[id] || [];
+  cal.fits[id] = await api.calSolve(id, obs, cal.solvePosition);
+  changed();
+}
+
+export async function applyFit(id) {
+  const fit = cal.fits[id];
+  if (!fit) return;
+  const a = fit.after;
+  await api.calApply({
+    fixture_id: id, yaw_deg: a.yaw_deg, pitch_deg: a.pitch_deg, pan_offset_deg: a.pan_offset_deg,
+    tilt_offset_deg: a.tilt_offset_deg, inverted_pan: a.inverted_pan, inverted_tilt: a.inverted_tilt,
+    position: fit.solved_position ? a.position : undefined,
+  });
+  delete cal.fits[id];
+  delete cal.raw[id];
+  cal.original[id] = null; // the applied values are the new starting point for Reset
+  changed();
+}
+
+export function discardFit(id) {
+  delete cal.fits[id];
+  changed();
 }
 
 // Leaving calibration (closing the window, going to show mode) puts the lights back
