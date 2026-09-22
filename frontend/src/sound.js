@@ -313,20 +313,28 @@ function functionCard(fn) {
     cb.onchange = () => {
       cb.checked ? chosen.add(t.id) : chosen.delete(t.id);
       patchLater(fn.id, { targets: [...chosen] });
+      renderZoneBox(); // which lights are zoned can change with the target selection -- reflect it now,
+      // not on the next poll (a target checkbox usually keeps focus, which held the whole card's rebuild)
     };
     lab.append(cb, ` ${t.label}`);
     targets.appendChild(lab);
   }
   card.appendChild(targets);
 
-  // zones: only for functions that honour them, and only if a target has zones to pick
-  const zones = schema && schema.uses_zones ? state.zonesForFixtures(state.expandIds(fn.targets)) : [];
-  if (zones.length) {
-    const box = document.createElement("div");
-    box.className = "fn-targets fn-zones";
-    box.title = "Which zones this effect drives. Lights without zones are driven as normal.";
-    const pickedZones = new Set(fn.zones || []);
-    const push = () => patchLater(fn.id, { zones: [...pickedZones] });
+  // zones: only for functions that honour them, and only for targets that have zones to pick. Rebuilt
+  // from the live `chosen` set (not the server's fn.targets) so ticking/unticking a target above updates
+  // this immediately instead of waiting for the next poll.
+  const zoneBox = document.createElement("div");
+  zoneBox.className = "fn-targets fn-zones hidden";
+  zoneBox.title = "Which zones this effect drives. Lights without zones are driven as normal.";
+  card.appendChild(zoneBox);
+  const pickedZones = new Set(fn.zones || []);
+  const push = () => patchLater(fn.id, { zones: [...pickedZones] });
+  function renderZoneBox() {
+    const zones = schema && schema.uses_zones ? state.zonesForFixtures(state.expandIds([...chosen])) : [];
+    zoneBox.classList.toggle("hidden", zones.length === 0);
+    if (zones.length === 0) return;
+    zoneBox.innerHTML = "";
     const zoneChip = (label, checked, onChange) => {
       const lab = document.createElement("label");
       lab.className = "chip zone";
@@ -335,23 +343,23 @@ function functionCard(fn) {
       cb.checked = checked;
       cb.onchange = () => onChange(cb);
       lab.append(cb, ` ${label}`);
-      box.appendChild(lab);
+      zoneBox.appendChild(lab);
     };
     zoneChip("all zones", pickedZones.size === 0, (cb) => {
       pickedZones.clear();
       push();
-      box.querySelectorAll("input").forEach((other) => { if (other !== cb) other.checked = false; });
+      zoneBox.querySelectorAll("input").forEach((other) => { if (other !== cb) other.checked = false; });
       cb.checked = true;
     });
     for (const z of zones) {
       zoneChip(z.label, pickedZones.has(z.id), (cb) => {
         cb.checked ? pickedZones.add(z.id) : pickedZones.delete(z.id);
-        box.querySelector("input").checked = pickedZones.size === 0;
+        zoneBox.querySelector("input").checked = pickedZones.size === 0;
         push();
       });
     }
-    card.appendChild(box);
   }
+  renderZoneBox();
 
   // parameters
   for (const p of schema ? schema.params : []) {
