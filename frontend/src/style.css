@@ -258,6 +258,15 @@ body[data-mode="edit"] #sidebar.editing .item-tools { display: flex; }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .modal-content.wide { width: 620px; }
 #rs-canvas { background: #0e1013; border: 1px solid var(--panel-border); border-radius: 6px; margin: 10px 0; cursor: crosshair; display: block; }
+.rs-point-list { margin-top: 8px; max-height: 220px; overflow-y: auto; }
+.rs-point-row {
+  display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: #262a31;
+  border-radius: 6px; margin-bottom: 4px; font-size: 0.8em;
+}
+.rs-point-row label { display: flex; align-items: center; gap: 4px; margin: 0; flex: 1; }
+.rs-point-row input { width: 100%; margin: 0; padding: 3px 5px; }
+.rs-point-index { width: 52px; flex: none; color: var(--text-dim); }
+.rs-point-remove { flex: none; padding: 3px 8px; font-size: 0.85em; }
 .function-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .function-grid label { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin: 2px 0; }
 .function-grid input { width: 60px; }

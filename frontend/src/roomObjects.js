@@ -27,7 +27,8 @@ function updateFieldVisibility() {
   document.getElementById("ro-width-label").style.display = kind === "wall" ? "none" : "";
   document.getElementById("ro-depth-label").style.display = kind === "wall" ? "none" : "";
   document.getElementById("ro-pos-legend").textContent =
-    kind === "wall" ? "Start point" : kind === "person" ? "Ground position" : "Base position (center)";
+    (kind === "wall" ? "Start point" : kind === "person" ? "Ground position" : "Base position (center)")
+    + " (meters)";
 }
 
 async function submitObject() {

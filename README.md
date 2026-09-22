@@ -219,7 +219,22 @@ CI.
   `Room.apply_shape()` rescales every fixture, object, and safety zone
   proportionally on save -- anchored on the floor's center -- so they
   keep their relative placement instead of ending up outside the new
-  walls or floating at the wrong height. The **Objects** editor adds
+  walls or floating at the wrong height.
+  - Each side's length is labelled live at its midpoint as you drag (the
+    two edges touching the point being dragged are highlighted); a point
+    can also be typed exactly (X/Y in meters) in the list below the
+    canvas, for a room whose measurements are already known -- handy
+    since a click/drag is only ever placed to the pixel.
+  - Dragging or clicking snaps to a grid: hold **Shift** for a fine grid
+    (0.1 m), **Ctrl** for a rough one (0.5 m), or neither for a free,
+    unsnapped placement (`FINE_SNAP_M`/`ROUGH_SNAP_M` in
+    `frontend/src/roomShape.js`).
+  - A point (dragged, typed, or placed by a click) can never leave the
+    fallback width/depth box -- drawn as a dashed outline, and it shrinks
+    live as you edit those fields -- since that box is also what
+    `Room.apply_shape()`'s rectangle fallback and `clamp_position()` use,
+    so the editor can never define a floor point the backend wouldn't
+    accept anyway. The **Objects** editor adds
   visual/spatial reference objects into the scene -- wall segments,
   person-scale markers (for a sense of scale), box obstacles, and raised
   surfaces/platforms. These are purely visual reference, unlike Safety
