@@ -60,21 +60,6 @@ jobs:
           }
           Write-Host "Built: $exe"
 
-      - name: Verify PyAudioWPatch was actually bundled
-        shell: pwsh
-        run: |
-          # It's a lazy, try/except-guarded import (app/audio/capture.py) so
-          # PyInstaller's static analysis can silently drop it -- the app
-          # would still build and launch fine, just with sound-to-light
-          # quietly broken. Check the bundle directly instead of trusting
-          # a clean build.
-          $found = Get-ChildItem -Path "dist/DMX Controller" -Recurse -Filter "*pyaudiowpatch*"
-          if (-not $found) {
-            throw "pyaudiowpatch was not bundled into the exe -- check desktop/dmx_controller.spec's hiddenimports"
-          }
-          Write-Host "Found bundled PyAudioWPatch files:"
-          $found | ForEach-Object { Write-Host "  $($_.FullName)" }
-
       - name: Smoke test -- launch the exe and confirm the backend (incl. audio) answers
         shell: pwsh
         run: |
