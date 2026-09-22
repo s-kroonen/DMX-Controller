@@ -162,7 +162,13 @@ class SoundService:
             self._taps = self._taps[-8:]
             if len(self._taps) >= 2:
                 intervals = np.diff(self._taps)
-                self.tap_bpm = float(max(30.0, min(300.0, 60.0 / float(np.mean(intervals)))))
+                mean_interval = float(np.mean(intervals))
+                # Two taps landing on the same clock reading (a duplicate
+                # event, or just a coarser monotonic clock on some
+                # platforms) would otherwise divide by zero -- treat that
+                # tap as a no-op instead of crashing the endpoint.
+                if mean_interval > 0:
+                    self.tap_bpm = float(max(30.0, min(300.0, 60.0 / mean_interval)))
             self.beat_source = "tap"
             self._next_tap_beat = now + (60.0 / self.tap_bpm if self.tap_bpm else 1e9)
             self._tap_beats_pending = 1  # the tap itself is a beat

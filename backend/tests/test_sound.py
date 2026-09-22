@@ -221,6 +221,16 @@ def test_tap_tempo_computes_bpm_and_switches_source(service):
     assert service.beat_source == "tap"
 
 
+def test_two_taps_at_the_same_instant_do_not_crash(service):
+    # Two taps landing on an identical clock reading (a duplicate event, or
+    # a platform whose monotonic clock is coarse enough for two fast taps
+    # to collide -- seen on Windows CI) must not raise ZeroDivisionError.
+    service.tap(now=10.0)
+    bpm = service.tap(now=10.0)
+    assert bpm == 0.0
+    assert service._taps == [10.0, 10.0]
+
+
 def test_a_long_pause_starts_a_new_tap_sequence(service):
     service.tap(now=10.0)
     service.tap(now=10.5)
