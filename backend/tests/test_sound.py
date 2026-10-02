@@ -23,6 +23,7 @@ BEAMZ = "beamz-mhl108-mkii-11ch"
 H1_DIM, B_DIM = 6, 33
 H1_RED, H1_GREEN, H1_BLUE = 7, 8, 9
 H1_PAN, H1_TILT = 1, 3
+BZ_RED, BZ_GREEN, BZ_BLUE = 34, 35, 36  # beamz starts at address 29
 
 
 class StubAnalyzer:
@@ -543,3 +544,204 @@ def test_api_sound_mode(client):
     assert client.post("/api/audio/config", json={"sound_mode": "nope"}).status_code == 400
     cfg = client.post("/api/audio/config", json={"sound_enabled": False}).json()["config"]
     assert cfg["sound_mode"] == "off"
+
+
+# ---- desync: replaying the SAME chase, delayed per group or per light --------------------------
+
+def test_beat_color_desync_light_offsets_each_light_by_a_beat_count(service, engine):
+    """granularity "light": every individual fixture is its own unit and gets the function's own
+    color sequence replayed `amount` beats later than the one before it -- same palette/every, just
+    staggered, never a color of its own."""
+    service.add_function("beat_color", ["h1", "h2", "bz"],
+                         {"palette": ["#ff0000", "#00ff00", "#0000ff"], "every": 1},
+                         desync={"granularity": "light", "mode": "beat", "amount": 1})
+    for _ in range(3):
+        beat(service)
+        tick(service)
+    assert (ch(engine, H1_RED), ch(engine, H1_GREEN), ch(engine, H1_BLUE)) == (0, 0, 255)   # h1: live = blue
+    h2_red, h2_green, h2_blue = 21, 22, 23
+    assert (ch(engine, h2_red), ch(engine, h2_green), ch(engine, h2_blue)) == (0, 255, 0)   # h2: 1 beat behind = green
+    assert (ch(engine, BZ_RED), ch(engine, BZ_GREEN), ch(engine, BZ_BLUE)) == (255, 0, 0)   # bz: 2 beats behind = red
+
+
+def test_beat_color_desync_group_keeps_a_group_in_sync_but_offset_from_another(service, engine):
+    """granularity "group": each TARGET (a picked group or an individually picked fixture) is its
+    own unit -- so h1 and h2, picked together as a group, stay showing the identical color as each
+    other, while a separately-picked fixture is offset from that whole group."""
+    from app.groups.model import Group
+    engine.add_group(Group(id="wash", name="Wash", fixture_ids=["h1", "h2"]))
+    service.add_function("beat_color", ["wash", "bz"], {"palette": ["#ff0000", "#00ff00"], "every": 1},
+                         desync={"granularity": "group", "mode": "beat", "amount": 1})
+    for _ in range(2):
+        beat(service)
+        tick(service)
+    h2_red, h2_green, h2_blue = 21, 22, 23
+    assert (ch(engine, H1_RED), ch(engine, H1_GREEN), ch(engine, H1_BLUE)) == (0, 255, 0)     # wash: live = green
+    assert (ch(engine, h2_red), ch(engine, h2_green), ch(engine, h2_blue)) == (0, 255, 0)     # h2 matches h1 exactly
+    assert (ch(engine, BZ_RED), ch(engine, BZ_GREEN), ch(engine, BZ_BLUE)) == (255, 0, 0)     # bz: 1 beat behind = red
+
+
+def test_beat_color_desync_timer_mode_uses_wall_clock_not_beats(service, engine):
+    """mode "timer": the delay is real time (independent of tempo), not a beat count."""
+    service.add_function("beat_color", ["h1", "h2"], {"palette": ["#ff0000", "#00ff00", "#0000ff"], "every": 1},
+                         desync={"granularity": "light", "mode": "timer", "amount": 100})
+    t0 = 1_000.0
+    for i in range(3):
+        beat(service)
+        service.tick(0.05, t0 + i * 0.05)   # three beats, 50ms apart -> the last tick is at t0+0.10
+    assert (ch(engine, H1_RED), ch(engine, H1_GREEN), ch(engine, H1_BLUE)) == (0, 0, 255)     # h1: live = blue
+    h2_red, h2_green, h2_blue = 21, 22, 23
+    assert (ch(engine, h2_red), ch(engine, h2_green), ch(engine, h2_blue)) == (255, 0, 0)     # h2: 100ms back = red
+
+
+def test_desync_off_by_default_and_reported_by_function_types_for_ui():
+    from app.audio.functions import function_types_for_ui
+    flags = {t["type"]: t["uses_desync"] for t in function_types_for_ui()}
+    assert flags["beat_color"] and flags["zone_chase"]
+    assert not flags["vu_dimmer"] and not flags["beat_flash"] and not flags["beat_movement"]
+
+
+def test_desync_persists_and_defaults_fill_in_missing_fields(engine, tmp_path):
+    storage = Storage(data_dir=tmp_path / "data")
+    a = SoundService(engine, storage, device_lister=lambda: [], device_finder=lambda *x, **k: None)
+    fn = a.add_function("beat_color", ["h1"], desync={"granularity": "light", "mode": "timer", "amount": 250})
+    a.shutdown()
+    b = SoundService(engine, storage, device_lister=lambda: [], device_finder=lambda *x, **k: None)
+    assert b.functions[fn.id].desync == {"granularity": "light", "mode": "timer", "amount": 250}
+    b.update_function(fn.id, desync={"granularity": "group"})   # mode/amount not given -> default fills them in
+    assert b.functions[fn.id].desync == {"granularity": "group", "mode": "beat", "amount": 1}
+    b.shutdown()
+
+
+# ---- priority: the topmost enabled function wins an overlap, in order -----------------------------
+
+# ---- priority: the topmost enabled function wins an overlap, in order -----------------------------
+
+def test_two_color_effects_on_the_same_light_the_topmost_wins(service, engine):
+    top = service.add_function("beat_color", ["bz"], {"palette": ["#ff0000"], "every": 1})     # added first -> on top
+    bottom = service.add_function("beat_color", ["bz"], {"palette": ["#0000ff"], "every": 1})   # added second -> below
+    beat(service)
+    tick(service)
+    assert (ch(engine, BZ_RED), ch(engine, BZ_GREEN), ch(engine, BZ_BLUE)) == (255, 0, 0)   # top wins
+    service.reorder_functions([bottom.id, top.id])       # move the blue one to the top
+    beat(service)
+    tick(service)
+    assert (ch(engine, BZ_RED), ch(engine, BZ_GREEN), ch(engine, BZ_BLUE)) == (0, 0, 255)   # now it wins instead
+
+
+def test_a_lower_priority_function_still_advances_while_overridden(service, engine):
+    """It just doesn't get to send while every one of its targets is claimed -- so it resumes in
+    the right phase (not restarted from the top of its palette) once it is reordered to the top."""
+    top = service.add_function("beat_color", ["h1"], {"palette": ["#ff0000", "#00ff00"], "every": 1})
+    hidden = service.add_function("beat_color", ["h1"],
+                                  {"palette": ["#0000ff", "#ffff00", "#ff00ff"], "every": 1})
+    for _ in range(4):    # hidden's own index silently cycles 0,1,2,0 across these 4 beats
+        beat(service)
+        tick(service)
+    seen = (ch(engine, H1_RED), ch(engine, H1_GREEN), ch(engine, H1_BLUE))
+    assert seen not in [(0, 0, 255), (255, 255, 0), (255, 0, 255)]   # hidden's colors never shown
+    service.reorder_functions([hidden.id, top.id])        # promote hidden to the top
+    beat(service)                                          # a 5th beat: hidden's index -> (0+1)%3 = 1 = yellow
+    tick(service)
+    assert (ch(engine, H1_RED), ch(engine, H1_GREEN), ch(engine, H1_BLUE)) == (255, 255, 0)
+
+
+def test_different_zones_of_the_same_fixture_do_not_conflict(service, engine):
+    """Priority only resolves a real overlap; a chase on one zone and another effect on a
+    different zone of the SAME fixture still coexist, as already relied on elsewhere."""
+    from app.fixtures.library import FixtureLibrary
+    from app.room.model import FixtureInstance
+    engine.room.add_fixture(FixtureInstance(id="bar", name="Bar", profile_id="eurolite-kls-120-fx-21ch",
+                                            start_address=100))
+    engine.library = FixtureLibrary()
+    service.add_function("beat_color", ["bar"], {"palette": ["#ff0000"], "every": 1}, zones=["spot1"])
+    service.add_function("beat_color", ["bar"], {"palette": ["#00ff00"], "every": 1}, zones=["derby1"])
+    beat(service)
+    tick(service)
+    spot1_red = ch(engine, 100 + 3 - 1)
+    derby1_green = ch(engine, 100 + 13 - 1)
+    assert spot1_red == 255 and derby1_green == 255
+
+
+def test_a_master_control_function_conflicts_with_a_zone_specific_one(service, engine):
+    from app.fixtures.library import FixtureLibrary
+    from app.room.model import FixtureInstance
+    engine.room.add_fixture(FixtureInstance(id="bar", name="Bar", profile_id="eurolite-kls-120-fx-21ch",
+                                            start_address=100))
+    engine.library = FixtureLibrary()
+    service.add_function("beat_color", ["bar"], {"palette": ["#ff0000"], "every": 1})              # every zone
+    lower = service.add_function("beat_color", ["bar"], {"palette": ["#00ff00"], "every": 1}, zones=["spot1"])
+    beat(service)
+    tick(service)
+    spot1_red = ch(engine, 100 + 3 - 1)
+    spot1_green = ch(engine, 100 + 4 - 1)
+    assert spot1_red == 255 and spot1_green == 0        # the whole-fixture function won the overlap
+
+
+def test_different_attributes_on_the_same_fixture_stack_instead_of_blocking(service, engine):
+    """A beat_flash (dimmer) and a beat_color chase (color) write different DMX channels, so both
+    being enabled on the same fixture should combine, not have #2 fully blanked out just because
+    #1 is higher priority and they share the fixture and the color category/mode toggle."""
+    service.add_function("beat_flash", ["bz"], {"min_pct": 0, "max_pct": 100, "decay_ms": 10000})  # #1: dimmer
+    service.add_function("beat_color", ["bz"], {"palette": ["#00ff00"], "every": 1})                # #2: color
+    beat(service)
+    tick(service)
+    assert ch(engine, B_DIM) >= 250             # #1's flash landed (100% mapped through the profile's range)
+    assert (ch(engine, BZ_RED), ch(engine, BZ_GREEN), ch(engine, BZ_BLUE)) == (0, 255, 0)  # #2's color too
+
+
+def test_same_attribute_on_the_same_fixture_still_conflicts(service, engine):
+    """Two functions writing the SAME attribute (both dimmer) must still be exclusive -- the
+    attribute split must not accidentally let same-attribute functions stack too."""
+    service.add_function("vu_dimmer", ["bz"], {"attack_ms": 0, "release_ms": 0})   # #1: dimmer
+    service.add_function("beat_flash", ["bz"], {"min_pct": 0, "max_pct": 100, "decay_ms": 10000})  # #2: dimmer
+    service.analyzer.f.level = 0.0   # vu_dimmer wants 0 %...
+    beat(service)                    # ...while beat_flash's beat would want 100 %
+    tick(service)
+    assert ch(engine, B_DIM) == 0    # #1 (vu_dimmer) won the dimmer channel outright
+
+
+def test_reorder_ignores_unknown_ids_and_keeps_the_rest_at_the_end(service):
+    a = service.add_function("beat_flash", ["h1"])
+    b = service.add_function("beat_flash", ["h2"])
+    c = service.add_function("beat_flash", ["bz"])
+    service.reorder_functions([c.id, "nope"])
+    assert [fn.id for fn in service.functions.values()] == [c.id, a.id, b.id]
+
+
+def test_reorder_persists(engine, tmp_path):
+    storage = Storage(data_dir=tmp_path / "data")
+    a = SoundService(engine, storage, device_lister=lambda: [], device_finder=lambda *x, **k: None)
+    x = a.add_function("beat_flash", ["h1"])
+    y = a.add_function("beat_flash", ["h2"])
+    a.reorder_functions([y.id, x.id])
+    a.shutdown()
+    b = SoundService(engine, storage, device_lister=lambda: [], device_finder=lambda *x, **k: None)
+    assert [fn.id for fn in b.functions.values()] == [y.id, x.id]
+    b.shutdown()
+
+
+def test_api_reorder_functions(client):
+    a = client.post("/api/audio/functions", json={"type": "beat_flash", "targets": ["x"]}).json()
+    b = client.post("/api/audio/functions", json={"type": "beat_flash", "targets": ["y"]}).json()
+    result = client.post("/api/audio/functions/reorder", json={"order": [b["id"], a["id"]]}).json()
+    assert [fn["id"] for fn in result] == [b["id"], a["id"]]
+    assert [fn["id"] for fn in client.get("/api/audio/status").json()["functions"]] == [b["id"], a["id"]]
+
+
+def test_api_functions_carry_desync(client):
+    fn = client.post("/api/audio/functions", json={"type": "beat_color", "targets": ["x"]}).json()
+    assert fn["desync"] == {"granularity": "off", "mode": "beat", "amount": 1}       # default when omitted
+    fn = client.patch(f"/api/audio/functions/{fn['id']}",
+                      json={"desync": {"granularity": "light", "mode": "timer", "amount": 200}}).json()
+    assert fn["desync"] == {"granularity": "light", "mode": "timer", "amount": 200}
+
+
+def test_api_rejects_a_bad_desync_config(client):
+    assert client.post("/api/audio/functions", json={"type": "beat_color", "targets": ["x"],
+                                                      "desync": {"granularity": "bogus"}}).status_code == 400
+    fn = client.post("/api/audio/functions", json={"type": "beat_color", "targets": ["x"]}).json()
+    assert client.patch(f"/api/audio/functions/{fn['id']}",
+                        json={"desync": {"mode": "bogus"}}).status_code == 400
+    assert client.patch(f"/api/audio/functions/{fn['id']}",
+                        json={"desync": {"amount": -1}}).status_code == 400

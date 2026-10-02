@@ -21,7 +21,7 @@ import numpy as np
 
 from .analyzer import AudioAnalyzer, AudioFeatures
 from .capture import AudioCapture, find_device, list_devices
-from .functions import (FUNCTION_TYPES, SOUND_MODES, SoundFunction, StepContext,
+from .functions import (DEFAULT_DESYNC, FUNCTION_TYPES, SOUND_MODES, SoundFunction, StepContext,
                         category_active, default_params, make_runtime, validate)
 
 TICK_HZ = 40.0
@@ -52,6 +52,11 @@ class SoundService:
         self.capture = make_capture(self._on_samples, on_open=self._on_open)
 
         self._runtimes: dict[str, Any] = {}
+        # fn id -> the fixture ids it was allowed to act on last tick (see tick()): when priority
+        # takes a fixture away from a function, or gives it back, that function's *appearance*
+        # (color/level/...) may not have changed at all -- only whether it got to send has -- so a
+        # runtime's own change-dedup cache would otherwise never notice and just keep silent.
+        self._last_allowed: dict[str, tuple] = {}
         self._tick_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
@@ -185,20 +190,26 @@ class SoundService:
     # -- functions -----------------------------------------------------------
 
     def add_function(self, fn_type: str, targets: list[str], params: Optional[dict] = None,
-                     enabled: bool = True, zones: Optional[list[str]] = None) -> SoundFunction:
+                     enabled: bool = True, zones: Optional[list[str]] = None,
+                     desync: Optional[dict] = None) -> SoundFunction:
         if fn_type not in FUNCTION_TYPES:
             raise ValueError(f"unknown sound function type {fn_type!r}")
         with self._lock:
+            # dict insertion order is priority order (first/topmost = highest, see tick()); a new
+            # function is appended at the end/lowest so it never silently overrides what's already
+            # there -- reorder it up deliberately if it should.
             fn = SoundFunction(id=f"snd-{uuid.uuid4().hex[:8]}", type=fn_type, targets=list(targets),
                                enabled=enabled, params={**default_params(fn_type), **(params or {})},
-                               zones=list(zones or []))
+                               zones=list(zones or []),
+                               desync={**DEFAULT_DESYNC, **(desync or {})})
             self.functions[fn.id] = fn
             self._persist()
             return fn
 
     def update_function(self, fn_id: str, targets: Optional[list[str]] = None,
                         enabled: Optional[bool] = None, params: Optional[dict] = None,
-                        zones: Optional[list[str]] = None) -> SoundFunction:
+                        zones: Optional[list[str]] = None,
+                        desync: Optional[dict] = None) -> SoundFunction:
         with self._lock:
             fn = self.functions[fn_id]
             if targets is not None:
@@ -206,6 +217,8 @@ class SoundService:
                 fn.targets = list(targets)
             if zones is not None:
                 fn.zones = list(zones)
+            if desync is not None:
+                fn.desync = {**DEFAULT_DESYNC, **desync}
             if params is not None:
                 fn.params.update(params)
             if enabled is not None:
@@ -221,8 +234,25 @@ class SoundService:
             fn = self.functions.pop(fn_id)
             self._release(fn)
             self._runtimes.pop(fn_id, None)
+            self._last_allowed.pop(fn_id, None)
             self.errors.pop(fn_id, None)
             self._persist()
+
+    def reorder_functions(self, order: list[str]) -> list[SoundFunction]:
+        """Put the functions in this id order -- dict order is priority order, first (topmost in
+        the UI) wins when two enabled functions of the same category (color/motion) target the
+        same fixture (see tick()). An id that no longer exists is ignored; an existing function
+        left out of `order` keeps its place at the end, so a stale/partial list never drops one."""
+        with self._lock:
+            remaining = dict(self.functions)
+            reordered: dict[str, SoundFunction] = {}
+            for fn_id in order:
+                if fn_id in remaining:
+                    reordered[fn_id] = remaining.pop(fn_id)
+            reordered.update(remaining)
+            self.functions = reordered
+            self._persist()
+            return list(self.functions.values())
 
     def _release(self, fn: SoundFunction) -> None:
         runtime = self._runtimes.get(fn.id)
@@ -288,8 +318,35 @@ class SoundService:
         self._seen_beats = features.beat_count
         return beats, features
 
+    def _claim_cells(self, fn: SoundFunction, fixture_id: str) -> set[tuple[str, Optional[str]]]:
+        """What `fn` would touch on `fixture_id` for the purposes of priority: a plain fixture, or a
+        zoned one with no zones named (master/every-zone control), is claimed as a whole -- one
+        {(fixture_id, None)} cell; a zoned fixture with zones named claims only the zones both
+        chosen and present on it (none, if it has none of the named zones)."""
+        zones_on_fixture = self.engine.profile_for(fixture_id).zones
+        if not zones_on_fixture or not fn.zones:
+            return {(fixture_id, None)}
+        matched = {z.id for z in zones_on_fixture if z.id in fn.zones}
+        return {(fixture_id, zid) for zid in matched}
+
     def tick(self, dt: float, now: float) -> None:
-        """One step of every enabled function (also called directly by tests)."""
+        """One step of every enabled function, in priority order (also called directly by tests).
+
+        `self.functions`' dict order IS the priority order (see reorder_functions): the topmost
+        function claims whichever of its fixtures (or, for a zoned fixture with zones named, just
+        those zones) no higher-priority function writing the same *attribute* has already claimed
+        this tick; a lower-priority function loses only the fixtures it actually conflicts on, so
+        e.g. a chase on a bar's spots and a different one on its derbies still coexist exactly as
+        before -- only a real overlap (the same fixture, or the same zone of it, claimed by both,
+        AND the same attribute) is resolved by priority, deterministically instead of whoever's
+        tick happened to run last. A function that loses (some or all of) its targets this way
+        still steps, so its own timing/phase keeps advancing and it picks up smoothly once it is
+        no longer overridden; it just sends nothing for the lost part. Claiming is keyed by
+        FUNCTION_TYPES[...]["attribute"] ("dimmer"/"color"/"strobe"/"pan_tilt"), not by the
+        coarser color/motion category: a beat_flash (dimmer) and a beat_color chase (color) write
+        different DMX channels, so both can be enabled on the same fixture and stack -- #1's
+        brightness pulses drive #2's chase colors, rather than #2 fully blanking #1 out just for
+        sharing the fixture and the color/motion mode toggle."""
         with self._lock:
             beats, features = self._collect_beats(now)
             self._beat_index += beats
@@ -297,12 +354,45 @@ class SoundService:
                               beat_index=self._beat_index, dt=dt, now=now)
             if not self.sound_enabled:
                 return
+            claimed: dict[str, set[tuple[str, Optional[str]]]] = {}
             for fn in list(self.functions.values()):
                 if not fn.enabled or validate(fn) or not category_active(self.sound_mode, fn.type):
                     continue
+                attribute = FUNCTION_TYPES[fn.type]["attribute"]
+                already = claimed.setdefault(attribute, set())
+                try:
+                    resolved = self.engine.resolve_fixture_ids(fn.targets)
+                except KeyError:
+                    resolved = []   # a target that no longer exists -- let step() report it below
+                allowed = []
+                for fid in resolved:
+                    try:
+                        cells = self._claim_cells(fn, fid)
+                    except KeyError:
+                        allowed.append(fid)   # an unknown profile: let step() surface the real error
+                        continue
+                    if (fid, None) in already:
+                        continue   # the whole fixture is already someone else's
+                    if (fid, None) in cells:
+                        # this function wants the whole fixture -- blocked by ANY existing claim on it
+                        if any(f2 == fid for f2, _z in already):
+                            continue
+                    elif any(c in already for c in cells):
+                        continue   # one of the zones it wants is already someone else's
+                    allowed.append(fid)
+                    already.update(cells)
                 runtime = self._runtimes.get(fn.id)
                 if runtime is None:
                     runtime = self._runtimes[fn.id] = make_runtime(fn.type)
+                allowed_key = tuple(sorted(allowed))
+                if self._last_allowed.get(fn.id) != allowed_key:
+                    self._last_allowed[fn.id] = allowed_key
+                    runtime._last_sent = None   # force a resend even if its own appearance is unchanged
+                # `fn` itself (never a copy with a flattened target list) so a runtime that needs to
+                # know the ORIGINAL group/target structure (desync's per-group units) still can;
+                # ctx.allowed_ids is the one place "which fixtures may this function act on right
+                # now" lives, and every runtime filters its own resolved targets through it.
+                ctx.allowed_ids = frozenset(allowed)
                 try:
                     runtime.step(fn, ctx)
                     self.errors.pop(fn.id, None)

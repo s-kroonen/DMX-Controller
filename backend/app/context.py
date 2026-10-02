@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import uuid
 from typing import Optional
 
 from .dmx.dmx4all import Dmx4AllConfig, Dmx4AllOutput
@@ -38,9 +39,15 @@ class AppContext:
         for note in self.profile_notes:
             print(f"fixture profile {note['id']}: {note['action']} from the current version "
                   f"(old copy kept at {note['backup']})")
+        # A fresh id each time the process starts, so a client can tell "the backend restarted"
+        # apart from "I just reloaded the page" and reset anything that should only default-close
+        # on an actual reboot (floating window layout) without losing it on an ordinary refresh.
+        self.boot_id: str = uuid.uuid4().hex
+        self._settings: dict = self.storage.load_settings()
         # "edit": patch/room/group changes allowed; "show": run effects and aim heads. Held here so
-        # every screen (desktop and phone) sees, and obeys, the same mode.
-        self.mode: str = "edit"
+        # every screen (desktop and phone) sees, and obeys, the same mode. Restored from disk so a
+        # backend restart mid-show doesn't silently drop back to edit mode.
+        self.mode: str = self._settings.get("mode") if self._settings.get("mode") in self.MODES else "edit"
         self.sweep_player: Optional[AnimationPlayer] = None
         self.sweep_ids: list[str] = []
         room = self.storage.load_room()
@@ -76,10 +83,12 @@ class AppContext:
         self.sound = SoundService(self.engine, self.storage)
 
     def _build_initial_dmx_output(self) -> DmxOutput:
-        port = os.environ.get("DMX4ALL_PORT")
+        # The env var is an explicit override (e.g. a scratch DMX_DATA_DIR for testing) and always
+        # wins; otherwise reconnect to whatever port was last connected before the previous shutdown.
+        port = os.environ.get("DMX4ALL_PORT") or self._settings.get("dmx_port")
         if not port:
             return SimulatedDmxOutput()
-        baud = int(os.environ.get("DMX4ALL_BAUD", "38400"))
+        baud = int(os.environ.get("DMX4ALL_BAUD") or self._settings.get("dmx_baud") or 38400)
         config = Dmx4AllConfig(port=port, baud_rate=baud)
         self.last_dmx_config = config
         output, error = self._try_start_dmx4all(config)
@@ -145,6 +154,7 @@ class AppContext:
         self._swap_dmx_output(self._fresh_simulator(self.dmx))
         self.dmx_config = None
         self.dmx_error = None
+        self._persist_settings()
 
     def _open_dmx4all(self, config: Dmx4AllConfig) -> None:
         old = self.dmx
@@ -161,15 +171,18 @@ class AppContext:
                 self._swap_dmx_output(self._fresh_simulator(old), stop_old=False)
                 self.dmx_config = None
                 self.dmx_error = str(exc)
+                self._persist_settings()
             raise
         self._swap_dmx_output(new_output, stop_old=not holds_same_port)
         self.dmx_config = config
         self.last_dmx_config = config
         self.dmx_error = None
+        self._persist_settings()
 
     def _release_to_simulator(self) -> None:
         self._swap_dmx_output(self._fresh_simulator(self.dmx))
         self.dmx_config = None
+        self._persist_settings()
 
     @staticmethod
     def _fresh_simulator(previous: DmxOutput) -> SimulatedDmxOutput:
@@ -185,6 +198,15 @@ class AppContext:
         if stop_old:
             old_output.stop()
 
+    # -- settings that must survive a backend restart -------------------
+
+    def _persist_settings(self) -> None:
+        self.storage.save_settings({
+            "mode": self.mode,
+            "dmx_port": self.dmx_config.port if self.dmx_config else None,
+            "dmx_baud": self.dmx_config.baud_rate if self.dmx_config else None,
+        })
+
     # -- edit / show mode ---------------------------------------------
 
     MODES = ("edit", "show")
@@ -197,6 +219,7 @@ class AppContext:
         if mode == "show" and self.mode != "show":
             self.stop_calibration()     # the calibration beam and sweep belong to edit mode
         self.mode = mode
+        self._persist_settings()
 
     def stop_running_shows(self) -> None:
         for animation_id in list(self.players):
@@ -206,7 +229,7 @@ class AppContext:
         self.sound.configure(sound_mode="off")
 
     def snapshot(self) -> dict:
-        return {**self.engine.snapshot(), "mode": self.mode,
+        return {**self.engine.snapshot(), "mode": self.mode, "boot_id": self.boot_id,
                 "calibration": {"sweeping": self.sweep_player is not None, "sweep_ids": list(self.sweep_ids),
                                 "beam": self.engine.beam_ids()}}
 

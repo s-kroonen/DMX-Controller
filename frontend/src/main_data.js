@@ -19,6 +19,7 @@ export async function loadInitialData() {
   state.fixtureState = snap.fixture_state;
   state.dmxStatus = snap.dmx_status;
   state.mode = snap.mode || "edit";
+  state.boot_id = snap.boot_id;
   state.calibration = snap.calibration || state.calibration;
   notifyStateChange();
 }

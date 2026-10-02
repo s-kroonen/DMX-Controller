@@ -122,6 +122,8 @@ export const api = {
   audioAddFunction: (fn) => req("POST", "/audio/functions", fn),
   audioPatchFunction: (id, patch) => req("PATCH", `/audio/functions/${id}`, patch),
   audioDeleteFunction: (id) => req("DELETE", `/audio/functions/${id}`),
+  // ids in priority order, topmost/first = highest priority
+  audioReorderFunctions: (ids) => req("POST", "/audio/functions/reorder", { order: ids }),
 
   dmxPorts: () => req("GET", "/dmx/ports"),
   dmxStatus: () => req("GET", "/dmx/status"),

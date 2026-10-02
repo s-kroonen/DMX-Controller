@@ -1,5 +1,6 @@
-import { loadPref, savePref } from "./uiPrefs.js";
+import { loadPref, savePref, clearPrefsWithPrefix } from "./uiPrefs.js";
 import { onModeChange } from "./mode.js";
+import { state } from "./state.js";
 
 // Chrome behavior shared by every floating control window: dragging,
 // closing, and -- the actual point of this module -- remembering
@@ -67,8 +68,9 @@ function savePanelPref(panelId) {
   });
 }
 
-// Show the layout this mode last had; with none saved, show mode uses the markup's defaults and
-// edit mode starts with every window closed.
+// Show the layout this mode last had; with nothing saved (a first-ever visit, or right after a
+// backend restart cleared it -- see resetLayoutIfNewBoot), every window starts closed regardless
+// of mode, so an operator never has to hunt down and close windows they never opened themselves.
 function applyLayout(mode) {
   for (const { id } of PANELS) {
     const el = elementFor(id);
@@ -77,12 +79,25 @@ function applyLayout(mode) {
     const saved = loadPref(prefKey(id, mode), null) || (mode === "show" ? loadPref(`panel:${id}`, null) : null);
     el.style.left = (saved && saved.left) || defaults.left;
     el.style.top = (saved && saved.top) || defaults.top;
-    if (saved) el.style.display = saved.open === false ? "none" : "";
-    else el.style.display = mode === "edit" ? "none" : defaults.display;
+    el.style.display = saved && saved.open !== false ? "" : "none";
   }
 }
 
+// A fresh backend process (not just a page reload) must never reopen whatever floating windows
+// happened to be left open before it went down -- so no window is auto-shown right when an
+// operator needs a clean screen most. boot_id (set on the server each time it starts, carried in
+// /api/snapshot) tells the two apart: unchanged since our last visit is an ordinary reload/reopen
+// (window layout stays exactly as the operator left it), changed means the backend restarted.
+function resetLayoutIfNewBoot() {
+  const bootId = state.boot_id;
+  if (!bootId) return; // snapshot not loaded yet -- initPanelWindows() runs after it, so this shouldn't happen
+  if (loadPref("bootId", null) === bootId) return;
+  clearPrefsWithPrefix("panel:");
+  savePref("bootId", bootId);
+}
+
 export function initPanelWindows() {
+  resetLayoutIfNewBoot();
   for (const { id } of PANELS) {
     const el = elementFor(id);
     if (!el) continue;

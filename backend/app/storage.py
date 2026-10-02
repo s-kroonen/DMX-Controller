@@ -54,6 +54,23 @@ class Storage:
     def patterns_path(self) -> Path:
         return self.data_dir / "patterns.json"
 
+    @property
+    def settings_path(self) -> Path:
+        return self.data_dir / "settings.json"
+
+    def load_settings(self) -> dict:
+        """Backend-wide settings that must survive a restart: edit/show mode, the last-used
+        DMX4ALL port/baud. {} if none saved (or unreadable) -- callers fall back to defaults."""
+        if self.settings_path.exists():
+            try:
+                return json.loads(self.settings_path.read_text())
+            except ValueError:
+                return {}
+        return {}
+
+    def save_settings(self, data: dict) -> None:
+        self.settings_path.write_text(json.dumps(data, indent=2))
+
     # -- saved rooms: whole-venue snapshots kept in the backend (the same document as a config
     # export), so a room can be put away and brought back without exporting a file
 

@@ -351,11 +351,79 @@ def test_zone_chase_restricted_to_zones_only_chases_those(service, engine):
     assert vals(engine, SPOT1 + SPOT2) == [0] * 8
 
 
-def test_zone_chase_ignores_fixtures_without_zones(service, engine):
-    service.add_function("zone_chase", ["par"], {"every": 1})
+def test_zone_chase_on_a_fixture_with_no_zones_drives_it_as_one_cell(service, engine):
+    """A target with nothing to chase through is not dropped from the effect: it becomes one more
+    cell of its own, so a plain fixture alone in the chase is simply lit (a chase of one)."""
+    service.add_function("zone_chase", ["par"], {"palette": ["#ff0000"], "every": 1})
     beat(service)
-    tick(service)                                            # nothing to chase: no error, no output
+    tick(service)
+    assert engine.dmx.get_channel(dmx_par(2)) == 255          # par's red channel
     assert not service.errors
+
+
+def test_zone_chase_folds_a_plain_fixture_into_a_bars_zone_chase(service, engine):
+    """A light bar and a plain PAR selected together: the PAR joins the same left-to-right
+    sequence as one extra step, instead of being silently skipped."""
+    service.add_function("zone_chase", ["bar", "par"], {"palette": ["#ff0000"], "every": 1,
+                                                        "pattern": "sequence"})
+    order = []
+    for _ in range(6):
+        beat(service)
+        tick(service)
+        lit = [name for name, on in (
+            ("spot1", vals(engine, SPOT1)[0] == 255), ("spot2", vals(engine, SPOT2)[0] == 255),
+            ("derby1", vals(engine, DERBY1)[0] == 255), ("derby2", vals(engine, DERBY2)[0] == 255),
+            ("par", engine.dmx.get_channel(dmx_par(2)) == 255)) if on]
+        order.append(lit)
+    assert order == [["derby1"], ["spot1"], ["spot2"], ["derby2"], ["par"], ["derby1"]]
+
+
+def dmx_par(offset: int) -> int:
+    """DMX channel of the PAR's channel `offset` (1-indexed); the PAR is patched at address 20."""
+    return 20 + offset - 1
+
+
+def test_zone_chase_desync_light_replays_each_cell_delayed_by_beats(service, engine):
+    """granularity "light": every cell (a zone, or a fixture with none, "fixed" -- see the plain-PAR
+    test above) is its own unit and shows the SAME chase, `amount` beats later than the cell before
+    it -- never a color of its own. Cells in order: derby1, spot1, spot2, derby2, par."""
+    service.add_function("zone_chase", ["bar", "par"],
+                         {"palette": ["#ff0000"], "every": 1, "pattern": "sequence", "color_mode": "fixed"},
+                         desync={"granularity": "light", "mode": "beat", "amount": 1})
+    for _ in range(5):
+        beat(service)
+        tick(service)
+    # live (derby1, delay 0) is on step 4 of 5 -> lit index 4 (par) -- derby1 itself is off;
+    # spot1 (delay 1) replays step 3 (lit index 3, derby2) -- off; spot2 (delay 2) replays step 2
+    # (lit index 2 = spot2 itself) -- ON; derby2 (delay 3) replays step 1 (lit index 1) -- off;
+    # par (delay 4) replays step 0 (lit index 0) -- off
+    assert vals(engine, DERBY1)[0] == 0
+    assert vals(engine, SPOT1)[0] == 0
+    assert vals(engine, SPOT2)[0] == 255
+    assert vals(engine, DERBY2)[0] == 0
+    assert engine.dmx.get_channel(dmx_par(2)) == 0
+
+
+def test_zone_chase_desync_group_keeps_one_bar_in_sync_with_itself(service, engine):
+    """granularity "group": each TARGET is its own unit, so every zone of the SAME bar (one target)
+    still moves together -- only a second, separately-targeted bar is offset from the first."""
+    from app.fixtures.library import FixtureLibrary
+    from app.room.model import FixtureInstance
+
+    engine.room.add_fixture(FixtureInstance(id="bar2", name="Bar 2", profile_id=KLS, start_address=100))
+    engine.library = FixtureLibrary()
+    service.add_function("zone_chase", ["bar", "bar2"],
+                         {"palette": ["#ff0000", "#00ff00"], "every": 1, "pattern": "sequence",
+                          "color_mode": "fixed"},
+                         desync={"granularity": "group", "mode": "beat", "amount": 1})
+    beat(service)
+    tick(service)
+    # bar (unit 0, live): step 0 -> derby1 (index 0) lit red; every OTHER zone of bar is off
+    assert vals(engine, DERBY1)[:3] == [255, 0, 0]
+    assert vals(engine, SPOT1)[0] == 0 and vals(engine, SPOT2)[0] == 0 and vals(engine, DERBY2)[0] == 0
+    # bar2 (unit 1, delayed 1 beat): replays "before the first beat" -- nothing lit yet
+    bar2_derby1 = [100 + c - 1 for c in (12, 13, 14, 15)]
+    assert vals(engine, bar2_derby1)[0] == 0
 
 
 def test_sound_function_zones_persist(engine, tmp_path):

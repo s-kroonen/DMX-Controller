@@ -1,12 +1,21 @@
 import { api } from "./api.js";
 import { state } from "./state.js";
-import { isPanelOpen, openPanel } from "./panelWindows.js";
+import { openPanel } from "./panelWindows.js";
+import { loadPref, savePref } from "./uiPrefs.js";
 
 // Sound panel: pick the audio input (a microphone/line-in, or a LOOPBACK of
 // this PC's output when the music plays on this machine), watch the level/band
 // meters and the beat recogniser (BPM + beat dot, tap tempo as a fallback), and
 // build freestyler-style sound-to-light functions from a schema the backend
 // serves -- so adding a function type there needs no UI change.
+//
+// Functions are numbered #1, #2, ... in priority order: when two enabled functions of the same
+// category would both drive the same fixture (or the same zone of one), the topmost wins outright
+// (see the backend's SoundService.tick) -- Up/Down on a card moves it, saved via /functions/reorder.
+// Each card can be collapsed to just its header (persisted per function id) to keep a long list
+// manageable; #snd-functions is a CSS grid, so a wide/resized panel shows several cards per row
+// instead of one long column. The panel itself is resizable (a native drag handle at its corner);
+// the size is remembered too.
 
 const POLL_MS = 120;
 let functionTypes = [];
@@ -16,14 +25,43 @@ let lastDeviceSig = "";
 let pollTimer = null;
 let currentMode = "off";
 const patchTimers = new Map();
+const collapsed = new Set(loadPref("sound:collapsed", []));
+// A checkbox click updates its local set (chosen/pickedZones) and queues a debounced PATCH, but the
+// next poll can land before that PATCH has actually reached the server -- if a rebuild happens then
+// (e.g. because some OTHER field changed, or focus wasn't on the checkbox to hold the rebuild off,
+// which desktop can't rely on and mobile taps often don't preserve at all), it used to rebuild the
+// checkbox from the server's still-stale fn.targets/fn.zones and silently revert the click, so
+// unticking a target or a zone looked like it needed a second click to "stick". pendingFields keeps
+// each function's not-yet-confirmed targets/zones so a rebuild always prefers them over the server's
+// possibly-stale copy; an entry is cleared once a poll shows the server actually caught up.
+const pendingFields = new Map(); // fn.id -> {targets?: string[], zones?: string[]}
+
+function sameIdSet(a, b) {
+  if (a.length !== b.length) return false;
+  const bs = new Set(b);
+  return a.every((x) => bs.has(x));
+}
+
+function reconcilePending(functions) {
+  for (const f of functions) {
+    const p = pendingFields.get(f.id);
+    if (!p) continue;
+    const targetsDone = !("targets" in p) || sameIdSet(p.targets, f.targets);
+    const zonesDone = !("zones" in p) || sameIdSet(p.zones, f.zones || []);
+    if (targetsDone && zonesDone) pendingFields.delete(f.id);
+  }
+}
 
 const el = (id) => document.getElementById(id);
 
-export async function initSoundPanel() {
-  el("btn-sound").onclick = () => {
-    openPanel("sound");
-    refreshDevices();
-  };
+export async function initSoundPanel({ resizable = true } = {}) {
+  const btn = el("btn-sound");
+  if (btn) {
+    btn.onclick = () => {
+      openPanel("sound");
+      refreshDevices();
+    };
+  }
 
   el("snd-refresh").onclick = refreshDevices;
   el("snd-device").onchange = async () => {
@@ -68,6 +106,28 @@ export async function initSoundPanel() {
 
   await refreshDevices();
   pollTimer = setInterval(poll, POLL_MS);
+  if (resizable) initResizable();
+}
+
+// The panel is natively CSS-resizable (a drag handle at its corner); remember whatever size the
+// operator leaves it at, and restore it so a wide/tall layout (which turns the function list into
+// a multi-column grid, see the CSS) doesn't reset every reload. Desktop only -- mobile's drawer
+// doesn't offer resizing, so initSoundPanel({resizable:false}) skips this entirely.
+function initResizable() {
+  const panel = el("panel-sound");
+  if (!panel) return;
+  const saved = loadPref("sound:size", null);
+  if (saved && saved.width) {
+    panel.style.width = `${saved.width}px`;
+    panel.style.height = `${saved.height}px`;
+  }
+  let saveTimer = null;
+  new ResizeObserver(() => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      savePref("sound:size", { width: panel.offsetWidth, height: panel.offsetHeight });
+    }, 300);
+  }).observe(panel);
 }
 
 // ---- input devices -----------------------------------------------------------
@@ -133,7 +193,9 @@ function setStatusLine(text, isError) {
 // ---- live status ------------------------------------------------------------------
 
 async function poll() {
-  if (!isPanelOpen("sound")) return;
+  // Works for both the desktop floating panel and the mobile drawer pane: offsetParent is null
+  // whenever any ancestor (panel or drawer) is display:none, regardless of which chrome it's in.
+  if (!el("snd-functions") || !el("snd-functions").offsetParent) return;
   let status;
   try {
     status = await api.audioStatus();
@@ -236,10 +298,16 @@ function patchLater(id, body) {
   patchTimers.set(id, setTimeout(() => api.audioPatchFunction(id, body).catch(console.error), 200));
 }
 
+let lastRenderedFunctions = [];
+
 function renderFunctions(functions) {
-  // Rebuild only when something structural/edited-elsewhere changed, so polling
-  // never steals focus from an input being dragged or typed in.
-  const sig = JSON.stringify([currentMode, functions.map((f) => [f.id, f.enabled, f.error, f.targets, f.zones, f.params])]);
+  reconcilePending(functions); // drop any pending target/zone edit the server has now caught up with
+
+  // Rebuild only when something structural/edited-elsewhere changed (including the order, since
+  // it's part of the array being mapped below), so polling never steals focus from an input being
+  // dragged or typed in.
+  const sig = JSON.stringify([currentMode,
+    functions.map((f) => [f.id, f.enabled, f.error, f.targets, f.zones, f.desync, f.params])]);
   if (sig === lastFunctionsSig) return;
   if (document.activeElement && el("snd-functions").contains(document.activeElement)
       && lastFunctionsSig !== "") {
@@ -251,6 +319,7 @@ function renderFunctions(functions) {
     return;
   }
   lastFunctionsSig = sig;
+  lastRenderedFunctions = functions;
 
   const root = el("snd-functions");
   root.innerHTML = "";
@@ -258,7 +327,23 @@ function renderFunctions(functions) {
     root.innerHTML = '<div class="hint">No functions yet. Add one below, then switch Sound-to-light on.</div>';
     return;
   }
-  for (const fn of functions) root.appendChild(functionCard(fn));
+  functions.forEach((fn, i) => root.appendChild(functionCard(fn, i, functions.length)));
+}
+
+// Swap this function with its neighbour and save the new priority order (see functions.py's
+// tick(): dict/list order is priority, first = highest, so index 0 always wins an overlap).
+async function reorderTo(fromIndex, toIndex) {
+  if (toIndex < 0 || toIndex >= lastRenderedFunctions.length) return;
+  const ids = lastRenderedFunctions.map((f) => f.id);
+  const [moved] = ids.splice(fromIndex, 1);
+  ids.splice(toIndex, 0, moved);
+  lastFunctionsSig = ""; // the order change must force a rebuild even though no field value changed
+  try {
+    await api.audioReorderFunctions(ids);
+  } catch (e) {
+    setStatusLine(e.message, true);
+  }
+  renderFunctions((await api.audioStatus()).functions);
 }
 
 function targetChoices() {
@@ -268,20 +353,112 @@ function targetChoices() {
   ];
 }
 
-function functionCard(fn) {
+const DESYNC_DEFAULT = { granularity: "off", mode: "beat", amount: 1 };
+
+// The desync control group: granularity (off/group/light), mode (beat/timer) and the amount per
+// unit -- see backend/app/audio/functions.py's SoundFunction.desync docstring for the exact
+// semantics. Kept as one self-contained builder since it's identical for every uses_desync type.
+function desyncBox(fn) {
+  const box = document.createElement("div");
+  box.className = "fn-desync";
+  const d = { ...DESYNC_DEFAULT, ...(fn.desync || {}) };
+
+  const set = (patch) => {
+    Object.assign(d, patch);
+    fn.desync = { ...d };
+    patchLater(fn.id, { desync: { ...d } });
+    render();
+  };
+
+  const granularity = document.createElement("select");
+  granularity.innerHTML = `
+    <option value="off">No desync -- every light together</option>
+    <option value="group">Per group -- each picked group/light its own timing, in sync inside itself</option>
+    <option value="light">Per light -- every light on its own, even within a group</option>`;
+  granularity.onchange = () => set({ granularity: granularity.value });
+
+  const mode = document.createElement("select");
+  mode.innerHTML = `
+    <option value="beat">Beat offset</option>
+    <option value="timer">Timer offset (ms, ignores tempo)</option>`;
+  mode.onchange = () => set({ mode: mode.value });
+
+  const amount = document.createElement("input");
+  amount.type = "number";
+  amount.min = "0";
+  amount.step = mode.value === "timer" ? "10" : "1";
+  amount.onchange = () => set({ amount: Math.max(0, Number(amount.value) || 0) });
+
+  const amountLabel = document.createElement("span");
+
+  function render() {
+    granularity.value = d.granularity;
+    mode.value = d.mode;
+    amount.value = d.amount;
+    amount.step = d.mode === "timer" ? "10" : "1";
+    mode.parentElement.classList.toggle("hidden", d.granularity === "off");
+    amount.parentElement.classList.toggle("hidden", d.granularity === "off");
+    amountLabel.textContent = d.mode === "timer" ? "ms per unit" : "beats per unit";
+  }
+
+  const modeRow = document.createElement("label");
+  modeRow.append("Offset by ", mode);
+  const amountRow = document.createElement("label");
+  amountRow.append(amount, " ", amountLabel);
+
+  box.append("Desync: ", granularity, modeRow, amountRow);
+  render();
+  return box;
+}
+
+function functionCard(fn, index, total) {
   const schema = schemaFor(fn.type);
   const card = document.createElement("div");
   card.className = "fn-card";
   card.dataset.fn = fn.id;
+  const isCollapsed = collapsed.has(fn.id);
+  card.classList.toggle("collapsed", isCollapsed);
 
   const head = document.createElement("div");
   head.className = "fn-head";
+
+  const num = document.createElement("span");
+  num.className = "fn-num";
+  num.textContent = `#${index + 1}`;
+  num.title = "Priority: #1 wins when two enabled functions would drive the same light at once";
+
+  const order = document.createElement("div");
+  order.className = "fn-order";
+  const up = document.createElement("button");
+  up.type = "button"; up.textContent = "▲"; up.title = "Move up (higher priority)";
+  up.disabled = index === 0;
+  up.onclick = () => reorderTo(index, index - 1);
+  const down = document.createElement("button");
+  down.type = "button"; down.textContent = "▼"; down.title = "Move down (lower priority)";
+  down.disabled = index === total - 1;
+  down.onclick = () => reorderTo(index, index + 1);
+  order.append(up, down);
+
+  const collapseBtn = document.createElement("button");
+  collapseBtn.type = "button";
+  collapseBtn.className = "fn-collapse";
+  collapseBtn.textContent = isCollapsed ? "▸" : "▾";
+  collapseBtn.title = isCollapsed ? "Expand" : "Collapse";
+  collapseBtn.onclick = () => {
+    const now = card.classList.toggle("collapsed");
+    collapseBtn.textContent = now ? "▸" : "▾";
+    collapseBtn.title = now ? "Expand" : "Collapse";
+    if (now) collapsed.add(fn.id); else collapsed.delete(fn.id);
+    savePref("sound:collapsed", [...collapsed]);
+  };
+
   const enable = document.createElement("input");
   enable.type = "checkbox";
   enable.checked = fn.enabled;
   enable.onchange = () => patchLater(fn.id, { enabled: enable.checked });
   const title = document.createElement("b");
   title.textContent = schema ? schema.label : fn.type;
+  title.title = title.textContent;
   const category = schema ? schema.category : "color";
   const tag = document.createElement("span");
   tag.className = `fn-tag ${category}`;
@@ -294,32 +471,45 @@ function functionCard(fn) {
   del.className = "fn-del";
   del.onclick = async () => {
     await api.audioDeleteFunction(fn.id).catch(console.error);
+    pendingFields.delete(fn.id);
     lastFunctionsSig = "";
     renderFunctions((await api.audioStatus()).functions);
   };
-  head.append(enable, title, tag, del);
+  head.append(num, order, collapseBtn, enable, title, tag, del);
   card.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "fn-body";
+  card.appendChild(body);
 
   // targets
   const targets = document.createElement("div");
   targets.className = "fn-targets";
-  const chosen = new Set(fn.targets);
+  const pending = pendingFields.get(fn.id);
+  // A rebuild can be forced (some other field changed, or -- especially on mobile -- a checkbox tap
+  // doesn't reliably keep focus the way a desktop click does, so the "user is mid-edit" guard in
+  // renderFunctions can't always hold it off) before our own last click's PATCH has reached the
+  // server; prefer our own not-yet-confirmed selection over the server's possibly-stale copy so a
+  // rebuild never silently reverts what was just clicked.
+  const chosen = new Set(pending && "targets" in pending ? pending.targets : fn.targets);
   for (const t of targetChoices()) {
     const lab = document.createElement("label");
     lab.className = "chip";
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = chosen.has(t.id);
+    lab.append(cb, ` ${t.label}`);
     cb.onchange = () => {
       cb.checked ? chosen.add(t.id) : chosen.delete(t.id);
-      patchLater(fn.id, { targets: [...chosen] });
+      const targetsNow = [...chosen];
+      pendingFields.set(fn.id, { ...pendingFields.get(fn.id), targets: targetsNow });
+      patchLater(fn.id, { targets: targetsNow });
       renderZoneBox(); // which lights are zoned can change with the target selection -- reflect it now,
       // not on the next poll (a target checkbox usually keeps focus, which held the whole card's rebuild)
     };
-    lab.append(cb, ` ${t.label}`);
     targets.appendChild(lab);
   }
-  card.appendChild(targets);
+  body.appendChild(targets);
 
   // zones: only for functions that honour them, and only for targets that have zones to pick. Rebuilt
   // from the live `chosen` set (not the server's fn.targets) so ticking/unticking a target above updates
@@ -327,8 +517,8 @@ function functionCard(fn) {
   const zoneBox = document.createElement("div");
   zoneBox.className = "fn-targets fn-zones hidden";
   zoneBox.title = "Which zones this effect drives. Lights without zones are driven as normal.";
-  card.appendChild(zoneBox);
-  const pickedZones = new Set(fn.zones || []);
+  body.appendChild(zoneBox);
+  const pickedZones = new Set(pending && "zones" in pending ? pending.zones : fn.zones || []);
   const push = () => patchLater(fn.id, { zones: [...pickedZones] });
   function renderZoneBox() {
     const zones = schema && schema.uses_zones ? state.zonesForFixtures(state.expandIds([...chosen])) : [];
@@ -347,6 +537,7 @@ function functionCard(fn) {
     };
     zoneChip("all zones", pickedZones.size === 0, (cb) => {
       pickedZones.clear();
+      pendingFields.set(fn.id, { ...pendingFields.get(fn.id), zones: [] });
       push();
       zoneBox.querySelectorAll("input").forEach((other) => { if (other !== cb) other.checked = false; });
       cb.checked = true;
@@ -354,6 +545,7 @@ function functionCard(fn) {
     for (const z of zones) {
       zoneChip(z.label, pickedZones.has(z.id), (cb) => {
         cb.checked ? pickedZones.add(z.id) : pickedZones.delete(z.id);
+        pendingFields.set(fn.id, { ...pendingFields.get(fn.id), zones: [...pickedZones] });
         zoneBox.querySelector("input").checked = pickedZones.size === 0;
         push();
       });
@@ -361,16 +553,26 @@ function functionCard(fn) {
   }
   renderZoneBox();
 
+  // desync: only for chases (uses_desync) -- spread the SAME color sequence across time instead of
+  // showing it to every light at once. "Per group" keeps each picked group/fixture in sync with
+  // itself but offset from the others; "Per light" desyncs every individual light, even within one
+  // group. The offset is either a beat count (locked to tempo) or a millisecond delay (its own
+  // clock, independent of BPM) -- never a color of its own; palette/every/pattern still come from
+  // the params above and are simply replayed later for each unit.
+  if (schema && schema.uses_desync) {
+    body.appendChild(desyncBox(fn));
+  }
+
   // parameters
   for (const p of schema ? schema.params : []) {
     const value = fn.params[p.key] ?? p.default;
-    card.appendChild(paramRow(fn, p, value));
+    body.appendChild(paramRow(fn, p, value));
   }
 
   const err = document.createElement("div");
   err.className = "fn-error";
   err.textContent = fn.error || "";
-  card.appendChild(err);
+  body.appendChild(err);
   return card;
 }
 

@@ -61,6 +61,30 @@ def test_the_mode_is_in_every_snapshot(client):
         assert ws.receive_json()["mode"] == "show"
 
 
+def test_mode_survives_a_backend_restart(client, monkeypatch, data_dir):
+    mode(client, "show")
+
+    # simulate a full backend restart: a fresh AppContext reading the same data dir
+    monkeypatch.setattr(context_module, "_context", None)
+    assert context_module.get_context().mode == "show"
+
+
+def test_a_corrupt_or_missing_settings_file_falls_back_to_edit_mode(client, monkeypatch, data_dir):
+    (data_dir / "settings.json").write_text("not json")
+    monkeypatch.setattr(context_module, "_context", None)
+    assert context_module.get_context().mode == "edit"
+
+
+def test_snapshot_carries_a_boot_id_that_changes_on_restart(client, monkeypatch, data_dir):
+    first = client.get("/api/snapshot").json()["boot_id"]
+    assert first
+
+    monkeypatch.setattr(context_module, "_context", None)
+    with make_client(monkeypatch, data_dir) as restarted:
+        second = restarted.get("/api/snapshot").json()["boot_id"]
+    assert second != first
+
+
 EDIT_ONLY = [
     ("post", "/api/room/fixtures", {"name": "x", "profile_id": PAR, "start_address": 1}),
     ("put", "/api/room", {"name": "n", "dimensions": {"width": 5, "depth": 5, "height": 3}, "floor_points": []}),

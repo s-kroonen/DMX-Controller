@@ -323,20 +323,35 @@ at level.
 
 The whole UI (desktop and phone) is in one of two modes, chosen with the **Edit | Show** switch at the
 top. The backend holds the mode, so every screen agrees, and it refuses (HTTP 409) what the current
-mode does not allow. It starts in edit mode.
+mode does not allow. It starts in edit mode the very first time; after that, the mode (and the last
+DMX4ALL port/baud rate connected) survive a backend restart -- see below.
 
 - **Edit**: patch, move and delete fixtures, room shape, objects, safety zones, groups, the Fixture
-  Creator, DMX setup, animation/pattern editing, points, config and saved rooms. The 3D drag
+  Creator, animation/pattern editing, points, config and saved rooms. The 3D drag
   gizmo is on. Effects cannot run and heads cannot be aimed.
 - **Show**: run sound-to-light effects, play animations and patterns, aim moving heads (3D
   click-to-aim, the Pan / Tilt window, the phone's Aim screen). Nothing can be moved or edited: those
   buttons are simply not shown, and the sidebar Details are read-only.
-- **Both**: colors, dimmer, strobe, custom channels, zones, blackout, selecting groups and fixtures.
+- **Both**: colors, dimmer, strobe, custom channels, zones, blackout, selecting groups and fixtures,
+  and **DMX Setup** -- reconnecting or resetting the DMX4ALL interface is never gated by mode, so a
+  dropped connection can be fixed mid-show without switching out of it first.
 
 Switching to edit stops running animations, patterns and sound-to-light, and asks first so it is
 never done by accident during a show. `PUT /api/mode {"mode": "edit"|"show"}`; every snapshot and
 websocket message carries `mode`. Markup follows it with `<body data-mode>` and the `.edit-only` /
 `.show-only` classes (`frontend/src/mode.js`).
+
+### What survives a backend restart
+
+Room/groups/animations/patterns/sound config are always saved as they're edited (`backend/data/*.json`);
+`edit`/`show` mode and the last DMX4ALL port/baud are saved too (`data/settings.json`,
+`AppContext._persist_settings`), and DMX4ALL is reconnected automatically on the next boot if a port
+was set. What's deliberately NOT restored: every floating window's open/closed state resets to closed
+on an actual restart, so an operator never opens the app after a crash/update to find a screenful of
+windows they didn't ask for. This is told apart from an ordinary page reload (which DOES keep whatever
+was open, exactly as before) by a `boot_id` the backend hands out fresh each time it starts, carried in
+`/api/snapshot`; the frontend compares it against the last one it saw and clears its remembered window
+layout only when it changed (`frontend/src/panelWindows.js`, `resetLayoutIfNewBoot`).
 
 ## Calibrating the heads
 
@@ -497,17 +512,49 @@ Open the **Sound** window (top bar). It works like Freestyler's audio section:
   sliders. **Tap** switches to tap tempo (a metronome from your taps) for music the
   recogniser can't follow; switch back with the Beat selector.
 - **Functions** (add several, each with its own targets, e.g. the current selection):
-  VU dimmer, Beat flash, Beat color chase, Color organ (bass/mid/high -> R/G/B),
+  VU dimmer, Beat flash, Beat color chase, Beat zone chase, Color organ (bass/mid/high -> R/G/B),
   Beat strobe, Beat movement. Chases can run every 1/2/4/8 beats. Everything goes through
   the normal engine, so profile ranges, shared dimmer/strobe channels etc. still apply.
+  Beat zone chase folds in any target with no zones (a plain moving head or PAR alongside a
+  light bar) as one more cell of the same chase instead of skipping it.
+- **Priority, when two functions target the same light:** functions are numbered **#1, #2, ...**
+  in the order they're listed -- **#1 wins** whenever it and a lower-numbered function that writes
+  the same *attribute* (dimmer, color, strobe or pan/tilt -- not the coarser color/motion category)
+  would both drive the same fixture (or the same zone of one) at once, so two effects never flicker
+  back and forth fighting over a channel. Functions that write *different* attributes stack instead
+  of conflicting: a beat flash (dimmer) at #1 and a beat color chase (color) at #2 on the same light
+  both apply, since they don't actually touch the same DMX channels -- #1 no longer has to fully
+  blank #2 out just for sharing a fixture and the color/motion mode toggle. Reorder with the
+  ▲/▼ buttons on each card (`POST /api/audio/functions/reorder`, `{"order": [id, ...]}`,
+  topmost id first). A function that loses a fixture to a higher one keeps stepping internally
+  (so a chase resumes in phase, not from the start, once it's promoted); different zones of the
+  *same* fixture never conflict with each other, only a real overlap (same fixture/zone AND
+  attribute) does.
+- **Desync -- spreading a chase across time:** Beat color chase and Beat zone chase have a
+  **Desync** control. It never assigns a color of its own -- every light still follows the exact
+  same palette/order/every-N-beats the function is set to, replayed with a delay:
+  - **Per group**: each picked group, or each individually picked fixture/zone, is its own unit
+    that stays internally in sync with itself but is offset from the other units -- so a group
+    of lights can keep moving together while running behind (or ahead of) another group.
+  - **Per light**: every individual light (or, for the zone chase, every zone) is its own unit,
+    desynced even from others in the same group.
+  - The offset between units is either a **beat count** (locked to the detected tempo) or a
+    **timer** in milliseconds (its own clock, independent of BPM/tap tempo).
+- Each function card can be **collapsed** to just its header (the caret) to keep a long list
+  manageable; state is remembered per function. The **Sound** window itself is resizable (drag
+  its corner); past a couple of hundred pixels wide, the function list becomes a multi-column
+  grid instead of one long column, both remembered too.
 - **React to sound with: Off / Color / Motion / Both.** Color runs the dimmer, strobe and color
   functions; Motion runs pan/tilt functions; Both runs everything. Use *Color* when an animation
   owns the movement (sound never touches pan/tilt), *Motion* to leave colors alone. Functions
   outside the chosen mode are shown greyed out as paused.
-- Inputs, mode and functions persist in `backend/data/audio.json`.
+- Inputs, mode, functions (including their order) persist in `backend/data/audio.json`.
 
 API: `GET /api/audio/devices|status|function-types`, `POST /api/audio/select|start|stop|config|tap|bpm` (`config` takes `sound_mode`),
-`POST|PATCH|DELETE /api/audio/functions`.
+`POST|PATCH|DELETE /api/audio/functions`, `POST /api/audio/functions/reorder`. A function's `zones`
+(list of zone ids) and `desync` (`{"granularity": "off"|"group"|"light", "mode": "beat"|"timer",
+"amount": N}`) travel with it; `function-types` reports `uses_zones` and `uses_desync` per type so
+the UI knows which controls to offer.
 
 - **Mobile UI** (`frontend/mobile/`, served at `/mobile/`): the desktop
   UI's floating windows and 3D scene need more screen than a phone has, so
@@ -523,9 +570,13 @@ API: `GET /api/audio/devices|status|function-types`, `POST /api/audio/select|sta
     not screens you navigate away from -- tapping one slides a panel in
     over the current screen and back, so picking a different light (or
     checking sound status) never loses your place on, say, the Aim
-    screen. Lights is the group/fixture picker; Sound has an input
-    device picker plus start/stop; More has DMX status/reconnect and the
-    desktop-UI link.
+    screen. Lights is the group/fixture picker; Sound is the *same*
+    editor as the desktop Sound window -- input/meters/beat, mode,
+    the full function list with priority numbering, reorder, collapse,
+    targets/zones/desync/params, all through the shared `sound.js`
+    (`initSoundPanel({resizable: false})`; only the drag-to-resize is
+    desktop-only, there being no room for it on a phone); More has DMX
+    status/reconnect and the desktop-UI link.
   - **Shows** is where animations and patterns are actually authored on
     mobile now, not just played -- three sub-tabs (Animations / Patterns
     / Points) each with a list (play/stop/edit/delete) and a full edit

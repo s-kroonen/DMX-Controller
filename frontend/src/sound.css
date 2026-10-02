@@ -1,0 +1,45 @@
+/* Sound-to-light UI: shared between the desktop floating panel (index.html) and the mobile
+   drawer (mobile/index.html) -- both mount the same markup/ids via sound.js, so the visuals
+   need to match. Panel-only chrome (resize handle, floating position) stays in style.css. */
+
+.primary-btn { background: var(--accent); border-color: var(--accent); }
+.snd-row { display: flex; gap: 6px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.snd-row select { flex: 1; min-width: 0; }
+.snd-meters { display: grid; gap: 4px; margin: 8px 0; }
+.meter { display: grid; grid-template-columns: 44px 1fr; align-items: center; gap: 6px; font-size: 0.75em; }
+.meter .bar { height: 8px; background: #1b1f27; border-radius: 4px; overflow: hidden; }
+.meter .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 60ms linear; }
+.beat-dot { width: 14px; height: 14px; border-radius: 50%; background: #3a4150; display: inline-block; }
+.beat-dot.flash { animation: beat-flash 180ms ease-out; }
+@keyframes beat-flash { from { background: #ffd54a; box-shadow: 0 0 10px #ffd54a; } to { background: #3a4150; box-shadow: none; } }
+.snd-master { display: grid; gap: 4px; margin: 8px 0; }
+.snd-master .btn-row button.active { background: var(--accent); border-color: var(--accent); }
+/* a wide/resized panel shows several effect cards per row instead of one long column */
+#snd-functions { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px; }
+.fn-card { border: 1px solid #2b303b; border-radius: 6px; padding: 6px; background: #161a21; min-width: 0; }
+.fn-head { display: flex; gap: 4px; align-items: center; }
+.fn-head b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fn-num { font-size: 0.7em; color: var(--text-dim); flex: none; }
+.fn-order { display: flex; flex-direction: column; flex: none; }
+.fn-order button { padding: 0 3px; line-height: 1; font-size: 0.6em; }
+.fn-collapse { flex: none; padding: 0 4px; background: transparent; border-color: transparent; }
+.fn-card.collapsed .fn-body { display: none; }
+.fn-card.paused { opacity: 0.45; }
+.fn-del { padding: 0 6px; }
+.fn-tag { font-size: 0.65em; padding: 0 6px; border-radius: 8px; background: #2c3a52; flex: none; }
+.fn-tag.motion { background: #4a3a2c; }
+.fn-targets { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.chip { font-size: 0.72em; background: #232833; border-radius: 10px; padding: 1px 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
+.chip.zone { background: #2b3550; }
+.fn-desync { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.75em; margin: 4px 0; padding: 4px 6px; background: #1c2027; border-radius: 6px; }
+.fn-desync select { width: auto; }
+.fn-desync label { display: flex; flex-direction: row; align-items: center; gap: 4px; margin: 0; }
+.fn-desync input[type=number] { width: 56px; }
+.fn-desync .hidden { display: none; }
+.fn-param { display: grid; grid-template-columns: 64px 1fr auto; gap: 6px; align-items: center; font-size: 0.75em; margin: 2px 0; }
+.fn-param input[type=range] { width: 100%; }
+.fn-param .palette-edit, .fn-param .positions-edit { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px; }
+.palette-edit input[type=color] { width: 26px; height: 22px; padding: 0; border: 0; background: none; }
+.pos-cell { display: inline-flex; gap: 2px; }
+.pos-cell input { width: 54px; }
+.fn-error { color: #ff8080; font-size: 0.72em; }

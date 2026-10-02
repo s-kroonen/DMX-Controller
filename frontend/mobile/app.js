@@ -6,6 +6,7 @@ import { logicalFromRaw } from "../src/roleRange.js";
 import { applyMode, initModeSwitch, onModeChange } from "../src/mode.js";
 import { mountCalibrationView } from "../src/calibrationView.js";
 import { finishCalibration } from "../src/calibration.js";
+import { initSoundPanel } from "../src/sound.js";
 
 // A radically simpler surface for phones than the desktop UI: instead of
 // overlaid floating windows and a 3D scene that assume a lot of screen,
@@ -58,7 +59,6 @@ function toggleDrawer(name) {
   document.getElementById("drawer-title").textContent =
     name.charAt(0).toUpperCase() + name.slice(1);
   if (name === "shows") { renderAnimList(); renderPatternList(); renderPointList(); }
-  if (name === "sound") { refreshSoundDevices(); renderSoundStatus(); }
   if (name === "more") renderMoreDmxStatus();
 }
 
@@ -638,43 +638,6 @@ function initShowsDrawer() {
   document.getElementById("pt-add").onclick = submitPoint;
 }
 
-// -------------------------------------------------------------- sound drawer
-
-async function refreshSoundDevices() {
-  const select = document.getElementById("sound-device");
-  try {
-    const devices = await api.audioDevices();
-    const status = await api.audioStatus();
-    select.innerHTML = "";
-    for (const d of devices) {
-      const opt = document.createElement("option");
-      opt.value = d.id; opt.textContent = d.name;
-      select.appendChild(opt);
-    }
-    if (status.device) select.value = status.device.id;
-    select.onchange = () => api.audioSelect(select.value).catch(console.error);
-  } catch {
-    select.innerHTML = '<option value="">(unavailable)</option>';
-  }
-}
-
-async function renderSoundStatus() {
-  const el = document.getElementById("sound-status");
-  try {
-    const status = await api.audioStatus();
-    el.textContent = status.capture.running
-      ? `Listening to ${status.capture.device_name || "input"}`
-      : "Stopped";
-  } catch {
-    el.textContent = "Sound-to-light not available.";
-  }
-}
-
-function initSoundDrawer() {
-  document.getElementById("sound-start").onclick = () => api.audioStart().then(renderSoundStatus).catch(renderSoundStatus);
-  document.getElementById("sound-stop").onclick = () => api.audioStop().then(renderSoundStatus).catch(renderSoundStatus);
-}
-
 // -------------------------------------------------------------- more drawer
 
 async function renderMoreDmxStatus() {
@@ -770,7 +733,7 @@ async function bootstrap() {
   initDimmerStrobeCard();
   initPanTiltPad();
   initShowsDrawer();
-  initSoundDrawer();
+  initSoundPanel({ resizable: false });
   initMoreDrawer();
   initBlackout();
   initModeSwitch();
@@ -798,12 +761,6 @@ async function bootstrap() {
     updateDmxPill();
     syncControlsFromState();
   });
-
-  // Desktop's sound panel polls continuously (sound.js); the drawer here
-  // only refreshed once on open, so status (and other sessions' start/stop)
-  // went stale while it stayed open. Poll the same way, but only while the
-  // sound drawer is actually visible, to skip needless requests otherwise.
-  setInterval(() => { if (openDrawer === "sound") renderSoundStatus(); }, 2000);
 
   await loadInitialData();
 

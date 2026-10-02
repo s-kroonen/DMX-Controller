@@ -363,3 +363,44 @@ def test_kill_usb_holders_releases_own_port_first(ctx, monkeypatch, fake_hw):
     assert killed[0]["name"] == "FreeStyler.exe"
     assert isinstance(app_ctx.dmx, SimulatedDmxOutput)
     assert app_ctx.last_dmx_config.port == "COM7"
+
+
+# ---- the connected port survives a backend restart, so a show doesn't come back up on the
+# simulator after a crash/update just because nobody reconnected it by hand -----------------------
+
+def test_a_connected_port_is_reconnected_automatically_after_a_restart(ctx, monkeypatch, fake_hw):
+    monkeypatch.delenv("DMX4ALL_PORT", raising=False)
+    app_ctx = context_module.get_context()
+    app_ctx.connect_dmx4all("COM7", baud_rate=57600)
+
+    monkeypatch.setattr(context_module, "_context", None)  # simulate a backend restart
+    restarted = context_module.get_context()
+
+    assert restarted.dmx_config.port == "COM7"
+    assert restarted.dmx_config.baud_rate == 57600
+    assert isinstance(restarted.dmx, _FakeDmx4All)
+
+
+def test_disconnecting_is_remembered_so_a_restart_does_not_reconnect(ctx, monkeypatch, fake_hw):
+    monkeypatch.delenv("DMX4ALL_PORT", raising=False)
+    app_ctx = context_module.get_context()
+    app_ctx.connect_dmx4all("COM7")
+    app_ctx.disconnect_dmx4all()
+
+    monkeypatch.setattr(context_module, "_context", None)
+    restarted = context_module.get_context()
+
+    assert restarted.dmx_config is None
+    assert isinstance(restarted.dmx, SimulatedDmxOutput)
+
+
+def test_an_explicit_env_var_overrides_the_remembered_port(ctx, monkeypatch, fake_hw):
+    monkeypatch.delenv("DMX4ALL_PORT", raising=False)
+    app_ctx = context_module.get_context()
+    app_ctx.connect_dmx4all("COM7")
+
+    monkeypatch.setattr(context_module, "_context", None)
+    monkeypatch.setenv("DMX4ALL_PORT", "COM9")
+    restarted = context_module.get_context()
+
+    assert restarted.dmx_config.port == "COM9"
