@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 import uuid
 from typing import Optional
 
+from . import auth
 from .dmx.dmx4all import Dmx4AllConfig, Dmx4AllOutput
 from .dmx.interface import DmxOutput
 from .dmx.simulator import SimulatedDmxOutput
@@ -63,6 +65,8 @@ class AppContext:
         # Reconnect button knows where to go back to.
         self.last_dmx_config: Optional[Dmx4AllConfig] = None
         self.dmx_error: Optional[str] = None
+        self._dmx_lock = threading.RLock()   # connect/reconnect/disconnect, from the API and the watchdog
+        self.dmx_retry_attempts = 0
         self.dmx = self._build_initial_dmx_output()
 
         self.engine = ShowEngine(room, self.library, self.dmx)
@@ -81,6 +85,9 @@ class AppContext:
         self.pattern_players: dict[str, PatternPlayer] = {}
         self.dmx.start()  # no-op if _build_initial_dmx_output already started it
         self.sound = SoundService(self.engine, self.storage)
+        self._watchdog_stop = threading.Event()
+        self._watchdog = threading.Thread(target=self._watchdog_loop, name="dmx-watchdog", daemon=True)
+        self._watchdog.start()
 
     def _build_initial_dmx_output(self) -> DmxOutput:
         # The env var is an explicit override (e.g. a scratch DMX_DATA_DIR for testing) and always
@@ -122,7 +129,8 @@ class AppContext:
         route) turns that into a 400. If a *different* output was running
         it is left untouched; if the failed attempt needed the port that
         the current output holds (same port), see _open_dmx4all."""
-        self._open_dmx4all(Dmx4AllConfig(port=port, baud_rate=baud_rate))
+        with self._dmx_lock:
+            self._open_dmx4all(Dmx4AllConfig(port=port, baud_rate=baud_rate))
 
     def reconnect_dmx4all(self, kill_other_holders: bool = False) -> list[dict]:
         """Re-open the DMX4ALL port after an unplug / stall / "Access is
@@ -132,14 +140,16 @@ class AppContext:
         it, then reconnects with the last-used config. Returns the list of
         killed processes. Raises on failure, leaving the simulator running
         so the backend stays usable."""
-        config = self.dmx_config or self.last_dmx_config
-        if config is None:
-            raise RuntimeError("no DMX4ALL connection to reconnect -- use Connect first")
-        killed: list[dict] = []
-        if kill_other_holders:
-            killed = self.kill_usb_holders(release_own_port=True)
-        self._open_dmx4all(config)
-        return killed
+        with self._dmx_lock:
+            config = self.dmx_config or self.last_dmx_config
+            if config is None:
+                raise RuntimeError("no DMX4ALL connection to reconnect -- use Connect first")
+            killed: list[dict] = []
+            if kill_other_holders:
+                killed = self.kill_usb_holders(release_own_port=True)
+            self._open_dmx4all(config)
+            self.dmx_retry_attempts = 0
+            return killed
 
     def kill_usb_holders(self, release_own_port: bool = False) -> list[dict]:
         """Kill other processes that may hold the dongle (lighting apps,
@@ -151,10 +161,12 @@ class AppContext:
     def disconnect_dmx4all(self) -> None:
         """Fall back to the simulator -- e.g. to free the COM port, or
         after a failed hardware test."""
-        self._swap_dmx_output(self._fresh_simulator(self.dmx))
-        self.dmx_config = None
-        self.dmx_error = None
-        self._persist_settings()
+        with self._dmx_lock:
+            self._swap_dmx_output(self._fresh_simulator(self.dmx))
+            self.dmx_config = None
+            self.dmx_error = None
+            self.dmx_retry_attempts = 0
+            self._persist_settings()
 
     def _open_dmx4all(self, config: Dmx4AllConfig) -> None:
         old = self.dmx
@@ -198,14 +210,73 @@ class AppContext:
         if stop_old:
             old_output.stop()
 
+    # -- DMX link watchdog ------------------------------------------------
+    #
+    # A dropped dongle (unplugged, stalled write, another app grabbing the port) used to need a click
+    # on the status pill. The watchdog retries the last-used port in the background instead, backing
+    # off from WATCHDOG_MIN_S to WATCHDOG_MAX_S, so the rig comes back by itself.
+
+    WATCHDOG_MIN_S = 2.0
+    WATCHDOG_MAX_S = 10.0
+
+    def dmx_needs_recovery(self) -> bool:
+        if isinstance(self.dmx, Dmx4AllOutput):
+            return bool(getattr(self.dmx, "link_lost", False))
+        # fell back to the simulator after a failed connect (not a deliberate disconnect: that clears dmx_error)
+        return self.dmx_error is not None and self.last_dmx_config is not None
+
+    def _watchdog_step(self) -> bool:
+        """One recovery attempt if one is due. True if it reconnected."""
+        with self._dmx_lock:
+            if not self.dmx_needs_recovery():
+                self.dmx_retry_attempts = 0
+                return False
+            self.dmx_retry_attempts += 1
+            try:
+                self.reconnect_dmx4all()
+            except Exception as exc:  # noqa: BLE001 -- keep retrying; surfaced via dmx_error
+                self.dmx_error = str(exc)
+                logger.info("DMX auto-reconnect attempt %d failed: %s", self.dmx_retry_attempts, exc)
+                return False
+        logger.warning("DMX link recovered automatically after %d attempt(s)", self.dmx_retry_attempts or 1)
+        return True
+
+    def _watchdog_loop(self) -> None:
+        delay = self.WATCHDOG_MIN_S
+        while not self._watchdog_stop.wait(delay):
+            if not self.dmx_needs_recovery():
+                delay = self.WATCHDOG_MIN_S
+                continue
+            delay = self.WATCHDOG_MIN_S if self._watchdog_step() else min(delay * 1.5, self.WATCHDOG_MAX_S)
+
     # -- settings that must survive a backend restart -------------------
 
     def _persist_settings(self) -> None:
-        self.storage.save_settings({
+        # A failed connect (dongle unplugged) leaves dmx_config empty but dmx_error set: the port is
+        # still wanted -- the watchdog is retrying it -- so a restart during the outage must not
+        # forget it. A deliberate disconnect clears dmx_error, so that one is forgotten.
+        wanted = self.dmx_config or (self.last_dmx_config if self.dmx_error else None)
+        # merged into what was loaded so settings owned elsewhere (the access PIN) are kept
+        self._settings.update({
             "mode": self.mode,
-            "dmx_port": self.dmx_config.port if self.dmx_config else None,
-            "dmx_baud": self.dmx_config.baud_rate if self.dmx_config else None,
+            "dmx_port": wanted.port if wanted else None,
+            "dmx_baud": wanted.baud_rate if wanted else None,
         })
+        self.storage.save_settings(self._settings)
+
+    # -- access PIN (see auth.py) ---------------------------------------
+
+    @property
+    def pin_hash(self) -> Optional[str]:
+        return self._settings.get("pin_hash") or None
+
+    def set_pin(self, pin: Optional[str]) -> None:
+        """Set (or, with None/empty, clear) the LAN access PIN."""
+        if pin:
+            self._settings["pin_hash"] = auth.hash_pin(pin)
+        else:
+            self._settings.pop("pin_hash", None)
+        self.storage.save_settings(self._settings)
 
     # -- edit / show mode ---------------------------------------------
 
@@ -229,7 +300,10 @@ class AppContext:
         self.sound.configure(sound_mode="off")
 
     def snapshot(self) -> dict:
-        return {**self.engine.snapshot(), "mode": self.mode, "boot_id": self.boot_id,
+        snap = self.engine.snapshot()
+        snap["dmx_status"] = {**snap["dmx_status"], "recovering": self.dmx_needs_recovery(),
+                              "retry_attempts": self.dmx_retry_attempts}
+        return {**snap, "mode": self.mode, "boot_id": self.boot_id,
                 "calibration": {"sweeping": self.sweep_player is not None, "sweep_ids": list(self.sweep_ids),
                                 "beam": self.engine.beam_ids()}}
 
@@ -421,6 +495,7 @@ class AppContext:
             player.stop()
 
     def shutdown(self) -> None:
+        self._watchdog_stop.set()
         self.stop_sweep()
         self.sound.shutdown()
         for player in list(self.players.values()):

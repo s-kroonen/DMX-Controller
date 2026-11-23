@@ -1,4 +1,5 @@
 import { state } from "./state.js";
+import { showPinPrompt, promptIfPinRequired } from "./auth.js";
 
 const BASE = "/api";
 
@@ -10,6 +11,7 @@ async function req(method, path, body) {
   }
   const resp = await fetch(BASE + path, opts);
   if (!resp.ok) {
+    if (resp.status === 401) showPinPrompt();   // LAN access PIN needed (see auth.js)
     const text = await resp.text();
     let detail = text;
     try { detail = JSON.parse(text).detail || text; } catch { /* not JSON, use raw text */ }
@@ -21,6 +23,9 @@ async function req(method, path, body) {
 }
 
 export const api = {
+  authStatus: () => req("GET", "/auth/status"),
+  setPin: (pin) => req("PUT", "/auth/pin", { pin }),
+
   listProfiles: () => req("GET", "/fixtures/profiles"),
   saveProfile: (profile) => req("POST", "/fixtures/profiles", profile),
   deleteProfile: (id) => req("DELETE", `/fixtures/profiles/${id}`),
@@ -152,7 +157,8 @@ export function connectWebSocket(onMessage) {
       console.error("bad ws payload", e);
     }
   };
-  ws.onclose = () => {
+  ws.onclose = async () => {
+    if (await promptIfPinRequired()) return;   // refused for want of the PIN: the prompt reloads the page
     setTimeout(() => connectWebSocket(onMessage), 2000);
   };
   return ws;

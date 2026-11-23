@@ -400,6 +400,18 @@
     <div id="modal-config" class="modal hidden">
       <div class="modal-content">
         <h2>Config <button class="modal-close">x</button></h2>
+        <fieldset id="cfg-pin">
+          <legend>Access PIN for other devices</legend>
+          <p class="hint">Phones and other PCs on the network are asked for this PIN (4 to 8 digits) before they
+            can see or control anything. This computer is never asked. Changing or clearing it signs every
+            other device out. <b id="cfg-pin-state"></b></p>
+          <label>New PIN <input id="cfg-pin-input" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>
+          <div class="btn-row">
+            <button id="cfg-pin-set" class="primary-btn" type="button">Set PIN</button>
+            <button id="cfg-pin-clear" type="button">Clear PIN</button>
+          </div>
+          <div id="cfg-pin-msg" class="hint"></div>
+        </fieldset>
         <fieldset id="cfg-rooms">
           <legend>Rooms saved in the backend</legend>
           <p class="hint">Current room: <b id="cfg-room-current"></b>. A saved room keeps everything (room shape,

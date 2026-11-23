@@ -33,8 +33,10 @@ function updateDmxStatusPill() {
   const status = state.dmxStatus || {};
   pill.onclick = null;
   pill.style.cursor = "";
-  if (status.link_lost) {
-    pill.textContent = "DMX: LINK LOST -- click to reconnect";
+  if (status.link_lost || status.recovering) {
+    // the backend retries the last port by itself (DMX watchdog); the click is a "retry now"
+    pill.textContent = status.recovering ? "DMX: LINK LOST -- reconnecting... (click to retry now)"
+                                         : "DMX: LINK LOST -- click to reconnect";
     pill.className = "status-pill error";
     pill.style.cursor = "pointer";
     pill.onclick = () => reconnectDmx(false);

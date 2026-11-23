@@ -3,9 +3,10 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 
+from .. import auth
 from ..context import get_context
 from ..dmx.dmx4all import Dmx4AllOutput, list_serial_ports
 from ..dmx.usb_procs import find_holders
@@ -52,6 +53,67 @@ SHOW = [Depends(require_show)]
 
 class ModeIn(BaseModel):
     mode: str
+
+
+# ---------------------------------------------------------------- access PIN (see app/auth.py)
+
+def _client_host(request: Request) -> Optional[str]:
+    return request.client.host if request.client else None
+
+
+def _authorized(request: Request) -> bool:
+    return auth.is_authorized(get_context().pin_hash, _client_host(request), request.cookies.get(auth.COOKIE))
+
+
+@router.get("/auth/status")
+def auth_status(request: Request):
+    return {"pin_set": get_context().pin_hash is not None, "authorized": _authorized(request),
+            "local": auth.is_loopback(_client_host(request))}
+
+
+class PinIn(BaseModel):
+    pin: str
+
+
+@router.post("/auth/login")
+def auth_login(payload: PinIn, request: Request, response: Response):
+    stored = get_context().pin_hash
+    if stored is None:
+        return {"authorized": True}
+    host = _client_host(request) or "?"
+    if auth.locked_out(host):
+        raise HTTPException(429, f"too many wrong PINs -- wait {int(auth.LOCKOUT_S)} seconds")
+    if not auth.pin_matches(payload.pin, stored):
+        auth.record_failure(host)
+        raise HTTPException(401, "wrong PIN")
+    auth.clear_failures(host)
+    response.set_cookie(auth.COOKIE, auth.token_for(stored), max_age=60 * 60 * 24 * 365,
+                        httponly=True, samesite="lax")
+    return {"authorized": True}
+
+
+@router.post("/auth/logout")
+def auth_logout(response: Response):
+    response.delete_cookie(auth.COOKIE)
+    return {"authorized": False}
+
+
+class PinChangeIn(BaseModel):
+    pin: str = ""   # empty clears the PIN
+
+
+@router.put("/auth/pin")
+def auth_set_pin(payload: PinChangeIn, request: Request):
+    """Set, change or clear the PIN. Allowed from this machine, or from a device that already has
+    the current PIN -- never from an unauthenticated LAN client, so nobody can lock the owner out."""
+    ctx = get_context()
+    local = auth.is_loopback(_client_host(request))
+    if not (local or (ctx.pin_hash is not None and _authorized(request))):
+        raise HTTPException(401, "pin required")
+    if payload.pin and not auth.valid_pin_format(payload.pin):
+        raise HTTPException(400, "the PIN must be 4 to 8 digits")
+    ctx.set_pin(payload.pin or None)
+    return {"pin_set": ctx.pin_hash is not None}
 
 
 @router.get("/mode")

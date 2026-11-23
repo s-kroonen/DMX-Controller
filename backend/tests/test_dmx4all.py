@@ -404,3 +404,61 @@ def test_an_explicit_env_var_overrides_the_remembered_port(ctx, monkeypatch, fak
     restarted = context_module.get_context()
 
     assert restarted.dmx_config.port == "COM9"
+
+
+# ---- the watchdog: a dropped link is retried in the background, no click needed -------------------
+
+def test_watchdog_recovers_a_lost_link_by_itself(ctx, monkeypatch, fake_hw):
+    monkeypatch.delenv("DMX4ALL_PORT", raising=False)
+    app_ctx = context_module.get_context()
+    app_ctx.connect_dmx4all("COM7")
+    app_ctx.dmx.link_lost = True            # a write failed: the link is down
+    assert app_ctx.dmx_needs_recovery()
+    assert app_ctx.snapshot()["dmx_status"]["recovering"] is True
+
+    assert app_ctx._watchdog_step() is True
+
+    assert app_ctx.dmx_config.port == "COM7"
+    assert not app_ctx.dmx_needs_recovery()
+    assert app_ctx.snapshot()["dmx_status"]["recovering"] is False
+
+
+def test_watchdog_keeps_retrying_while_unplugged_then_reconnects(ctx, monkeypatch, fake_hw):
+    monkeypatch.delenv("DMX4ALL_PORT", raising=False)
+    app_ctx = context_module.get_context()
+    app_ctx.connect_dmx4all("COM7")
+    app_ctx.dmx.link_lost = True
+    fake_hw.fail_open = True                # still unplugged
+
+    assert app_ctx._watchdog_step() is False
+    assert app_ctx._watchdog_step() is False
+    assert isinstance(app_ctx.dmx, SimulatedDmxOutput) and app_ctx.dmx_needs_recovery()
+    assert app_ctx.dmx_retry_attempts == 2
+
+    fake_hw.fail_open = False               # plugged back in
+    assert app_ctx._watchdog_step() is True
+    assert app_ctx.dmx_config.port == "COM7"
+    assert app_ctx.dmx_retry_attempts == 0
+
+
+def test_watchdog_leaves_a_deliberate_disconnect_alone(ctx, monkeypatch, fake_hw):
+    monkeypatch.delenv("DMX4ALL_PORT", raising=False)
+    app_ctx = context_module.get_context()
+    app_ctx.connect_dmx4all("COM7")
+    app_ctx.disconnect_dmx4all()
+    assert not app_ctx.dmx_needs_recovery()
+    assert app_ctx._watchdog_step() is False
+    assert app_ctx.dmx_config is None
+
+
+def test_the_port_is_not_forgotten_when_the_backend_restarts_mid_outage(ctx, monkeypatch, fake_hw):
+    monkeypatch.delenv("DMX4ALL_PORT", raising=False)
+    app_ctx = context_module.get_context()
+    app_ctx.connect_dmx4all("COM7")
+    app_ctx.dmx.link_lost = True
+    fake_hw.fail_open = True
+    app_ctx._watchdog_step()                # failed: now on the simulator with an error
+
+    fake_hw.fail_open = False
+    monkeypatch.setattr(context_module, "_context", None)
+    assert context_module.get_context().dmx_config.port == "COM7"

@@ -341,6 +341,25 @@ never done by accident during a show. `PUT /api/mode {"mode": "edit"|"show"}`; e
 websocket message carries `mode`. Markup follows it with `<body data-mode>` and the `.edit-only` /
 `.show-only` classes (`frontend/src/mode.js`).
 
+### DMX link watchdog
+
+If the DMX4ALL link drops (unplugged, a stalled write, another program grabbing the port) the backend
+retries the last-used port by itself, every 2 s backing off to 10 s, and the status pill shows
+"reconnecting..." until it is back (`AppContext._watchdog_loop`). It only acts on a lost link or a
+failed connect; a deliberate **Disconnect** is left alone, and the port is remembered across a restart
+that happens mid-outage. Clicking the pill / **Reconnect** still retries immediately.
+
+### Access PIN for other devices
+
+The server listens on every interface, so by default anyone on the network can run the lights. Set a
+**4-8 digit PIN** under **Config > Access PIN** (desktop, edit mode) and every other device is asked for
+it before it can use `/api` or `/ws`; the machine running the server (the desktop window, localhost) is
+never asked. A device logs in once (cookie, kept a year); changing or clearing the PIN signs the others
+out; five wrong tries lock that device out for 30 s. The PIN is stored as a salted hash in
+`data/settings.json` and can only be set from this machine or from an already-logged-in device. It is a
+lock on a trusted network, not user accounts or encryption (the connection is still plain HTTP). See
+`backend/app/auth.py`.
+
 ### What survives a backend restart
 
 Room/groups/animations/patterns/sound config are always saved as they're edited (`backend/data/*.json`);

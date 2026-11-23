@@ -13,6 +13,29 @@ export function initConfigModal() {
   document.getElementById("cfg-import").onclick = importConfig;
   document.getElementById("cfg-room-save").onclick = saveRoom;
   document.getElementById("cfg-room-new").onclick = newRoom;
+  document.getElementById("cfg-pin-set").onclick = () => savePin(document.getElementById("cfg-pin-input").value);
+  document.getElementById("cfg-pin-clear").onclick = () => savePin("");
+}
+
+// ---- access PIN for other devices (backend: app/auth.py) ------------------------------------------
+
+async function refreshPinState() {
+  try {
+    const status = await api.authStatus();
+    document.getElementById("cfg-pin-state").textContent = status.pin_set ? "A PIN is set." : "No PIN is set.";
+  } catch { /* the prompt handles a 401 */ }
+}
+
+async function savePin(pin) {
+  const msg = document.getElementById("cfg-pin-msg");
+  try {
+    const result = await api.setPin(pin);
+    document.getElementById("cfg-pin-input").value = "";
+    msg.textContent = result.pin_set ? "PIN saved." : "PIN cleared: other devices no longer need one.";
+  } catch (e) {
+    msg.textContent = e.message;
+  }
+  refreshPinState();
 }
 
 // ---- rooms saved in the backend --------------------------------------------------------------------
@@ -109,6 +132,8 @@ function openModal() {
   document.getElementById("cfg-import-status").textContent = "";
   document.getElementById("cfg-room-name").value = "";
   roomStatus().textContent = "";
+  document.getElementById("cfg-pin-msg").textContent = "";
+  refreshPinState();
   refreshRooms().catch((e) => { roomStatus().textContent = e.message; });
 }
 

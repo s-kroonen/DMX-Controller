@@ -705,8 +705,8 @@ async function importConfig() {
 function updateDmxPill() {
   const pill = document.getElementById("dmx-status");
   const status = state.dmxStatus || {};
-  if (status.link_lost) {
-    pill.textContent = "DMX: LINK LOST";
+  if (status.link_lost || status.recovering) {
+    pill.textContent = status.recovering ? "DMX: reconnecting..." : "DMX: LINK LOST";
     pill.className = "status-pill error";
   } else if (status.running) {
     pill.textContent = "DMX: running";

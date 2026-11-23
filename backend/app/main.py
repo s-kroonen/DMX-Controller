@@ -12,6 +12,7 @@ from .api.routes import router as api_router
 from .api.sound_routes import router as sound_router
 from .api.ws import broadcast_loop
 from .api.ws import router as ws_router
+from .auth import PinMiddleware
 from .context import get_context
 from .paths import bundle_root
 
@@ -52,6 +53,9 @@ app = FastAPI(title="DMX Controller", lifespan=lifespan)
 async def key_error_handler(request: Request, exc: KeyError):
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
+
+# LAN access PIN (a no-op until one is set); added before the routers so it wraps every route
+app.add_middleware(PinMiddleware, get_stored_pin=lambda: get_context().pin_hash)
 
 app.include_router(api_router)
 app.include_router(sound_router)
