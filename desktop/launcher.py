@@ -81,10 +81,18 @@ def main() -> None:
     window = webview.create_window(APP_NAME, f"http://127.0.0.1:{PORT}/index.html", width=1400, height=900)
 
     icon_holder: dict[str, pystray.Icon] = {}
+    quitting = threading.Event()
 
     def on_closing() -> bool:
         """Hide instead of destroy: other devices (mobile, other PCs) may
-        still be actively using this server."""
+        still be actively using this server. Except when Quit asked for it:
+        window.destroy() goes through this same closing event (pywebview's
+        WinForms backend cancels the close if any handler returns False), so
+        without this Quit only hid the window -- server and tray gone, but
+        webview.start() never returned and the process lived on invisibly,
+        still holding the files in dist/ (which then broke the next build)."""
+        if quitting.is_set():
+            return True
         window.hide()
         return False
 
@@ -92,6 +100,7 @@ def main() -> None:
         window.show()
 
     def quit_app(icon=None, item=None) -> None:
+        quitting.set()
         tray = icon_holder.get("icon")
         if tray:
             tray.stop()
@@ -114,7 +123,16 @@ def main() -> None:
     icon_holder["icon"] = tray
     threading.Thread(target=tray.run, daemon=True).start()
 
-    webview.start()
+    try:
+        webview.start()
+    finally:
+        # However the window ended (Quit, Windows logoff), never leave the server
+        # holding the DMX port. Both are no-ops if quit_app already did them.
+        try:
+            tray.stop()
+        except Exception:  # noqa: BLE001 -- already stopped by quit_app
+            pass
+        handle.stop()
 
 
 if __name__ == "__main__":
