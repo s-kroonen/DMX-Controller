@@ -9,7 +9,7 @@
   .\run.ps1 -Lan            # reachable from a phone/tablet on the same network
 #>
 param(
-    [string]$Port = "COM7",
+    [string]$Port = "COM3",
     [switch]$Sim,
     [switch]$Lan,
     [int]$HttpPort = 8000
@@ -20,10 +20,13 @@ $backend = Join-Path $PSScriptRoot "backend"
 Set-Location $backend
 
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
-    Write-Host "First run: creating virtualenv and installing requirements..."
+    Write-Host "First run: creating virtualenv..."
     python -m venv .venv
-    & .venv\Scripts\python.exe -m pip install -r requirements.txt
 }
+# Every start, not just the first: an existing venv otherwise never picks up
+# packages added to requirements.txt later. Fast no-op when nothing changed.
+& .venv\Scripts\python.exe -m pip install -q --disable-pip-version-check -r requirements.txt
+if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt failed" }
 
 if ($Sim) {
     Remove-Item Env:DMX4ALL_PORT -ErrorAction SilentlyContinue
