@@ -12,6 +12,10 @@ import { reloadRoomAndGroups } from "./main_data.js";
 // only. The 3D scene extrudes whatever outline is saved here up to the
 // ceiling height. Points are stored/sent in meters, room-space X/Y; the
 // canvas just maps a fixed pixels-per-meter scale around a center origin.
+// It is a top-down map with +X right and +Y UP, the same as the 3D view
+// seen from above and the compass yaw the IK uses (0 deg = +Y). Canvas
+// pixel Y grows downward, so every conversion goes through toPx()/
+// pixelsToMeters(), which flip it; drawing +Y downward mirrors the room.
 //
 // A dragged/typed/clicked point is always kept inside the fallback
 // width/depth box (the rectangle used when there is no drawn shape) --
@@ -132,7 +136,7 @@ function clampToBounds(p) {
 function pixelsToMeters(px, py, evt) {
   const canvas = document.getElementById("rs-canvas");
   let x = (px - canvas.width / 2) / PX_PER_METER;
-  let y = (py - canvas.height / 2) / PX_PER_METER;
+  let y = (canvas.height / 2 - py) / PX_PER_METER; // +Y is up on screen
   const snap = evt && evt.shiftKey ? FINE_SNAP_M : evt && evt.ctrlKey ? ROUGH_SNAP_M : null;
   if (snap) {
     x = Math.round(x / snap) * snap;
@@ -141,12 +145,15 @@ function pixelsToMeters(px, py, evt) {
   return clampToBounds({ x, y });
 }
 
-function hitTestPoint(px, py) {
+// A point in meters -> canvas pixels (the inverse of pixelsToMeters, without snapping).
+function toPx(p) {
   const canvas = document.getElementById("rs-canvas");
-  const cx = canvas.width / 2, cy = canvas.height / 2;
+  return { x: canvas.width / 2 + p.x * PX_PER_METER, y: canvas.height / 2 - p.y * PX_PER_METER };
+}
+
+function hitTestPoint(px, py) {
   for (let i = points.length - 1; i >= 0; i--) {
-    const x = cx + points[i].x * PX_PER_METER;
-    const y = cy + points[i].y * PX_PER_METER;
+    const { x, y } = toPx(points[i]);
     if (Math.hypot(px - x, py - y) <= HIT_RADIUS_PX) return i;
   }
   return null;
@@ -184,11 +191,10 @@ function edgeList() {
   return edges;
 }
 
-function centroidPx(cx, cy) {
-  if (points.length === 0) return { x: cx, y: cy };
-  const sx = points.reduce((sum, p) => sum + p.x, 0) / points.length;
-  const sy = points.reduce((sum, p) => sum + p.y, 0) / points.length;
-  return { x: cx + sx * PX_PER_METER, y: cy + sy * PX_PER_METER };
+function centroidPx() {
+  const sx = points.reduce((sum, p) => sum + p.x, 0) / (points.length || 1);
+  const sy = points.reduce((sum, p) => sum + p.y, 0) / (points.length || 1);
+  return toPx({ x: sx, y: sy });
 }
 
 function redraw() {
@@ -217,6 +223,14 @@ function redrawCanvas() {
   ctx.strokeStyle = "#4a5058";
   ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, canvas.height); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy); ctx.stroke();
+  // axis labels, so which way is +X / +Y (and so "up" in this plan) is never a guess
+  ctx.fillStyle = "#6b737d";
+  ctx.font = "11px sans-serif";
+  ctx.textBaseline = "top";
+  ctx.textAlign = "right";
+  ctx.fillText("+X", canvas.width - 4, cy + 3);
+  ctx.textAlign = "left";
+  ctx.fillText("+Y", cx + 4, 3);
 
   // the fallback width/depth box -- a drawn point can never leave it
   const { hw, hd } = bounds();
@@ -233,8 +247,7 @@ function redrawCanvas() {
     ctx.lineWidth = 2;
     ctx.beginPath();
     points.forEach((p, i) => {
-      const x = cx + p.x * PX_PER_METER;
-      const y = cy + p.y * PX_PER_METER;
+      const { x, y } = toPx(p);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     if (points.length > 2) ctx.closePath();
@@ -244,13 +257,13 @@ function redrawCanvas() {
     // side lengths, labelled at each edge's midpoint, offset outward from the shape's centroid so
     // the text sits clear of the fill; the edges touching the point being dragged (or hovered from
     // the list below) are drawn larger/brighter so a specific measurement is easy to pick out.
-    const centroid = centroidPx(cx, cy);
+    const centroid = centroidPx();
     ctx.font = "11px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     for (const [a, b, ia, ib] of edgeList()) {
-      const ax = cx + a.x * PX_PER_METER, ay = cy + a.y * PX_PER_METER;
-      const bx = cx + b.x * PX_PER_METER, by = cy + b.y * PX_PER_METER;
+      const { x: ax, y: ay } = toPx(a);
+      const { x: bx, y: by } = toPx(b);
       const mx = (ax + bx) / 2, my = (ay + by) / 2;
       let nx = mx - centroid.x, ny = my - centroid.y;
       const nlen = Math.hypot(nx, ny) || 1;
@@ -270,8 +283,7 @@ function redrawCanvas() {
     }
 
     points.forEach((p, i) => {
-      const x = cx + p.x * PX_PER_METER;
-      const y = cy + p.y * PX_PER_METER;
+      const { x, y } = toPx(p);
       const active = i === draggingIndex || i === highlightIndex;
       ctx.fillStyle = i === 0 ? "#ffffff" : active ? "#ffd27a" : "#3a7bd5";
       ctx.beginPath();
