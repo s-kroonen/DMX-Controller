@@ -22,7 +22,10 @@ from .show.animation import Animation, PatternAnimation
 
 # DMX_DATA_DIR points the app at another data folder (room, groups, sound, fixtures) --
 # for trying things out without touching the real venue data
-DEFAULT_DATA_DIR = Path(os.environ.get("DMX_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
+# Otherwise user_data_dir(): backend/data from source, %LOCALAPPDATA%\DMXController\data in the
+# packaged exe. Never a folder next to this file in the exe: that is dist/.../_internal/data, which
+# every rebuild deletes (and which the install location may not even allow writing to).
+DEFAULT_DATA_DIR = Path(os.environ.get("DMX_DATA_DIR") or user_data_dir())
 
 
 class Storage:
